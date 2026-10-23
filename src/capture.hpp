@@ -4,8 +4,10 @@
 // mingw-w64 14 headers define IReference<boolean> twice because boolean is BYTE; it is unused here.
 #define ____FIReference_1_boolean_INTERFACE_DEFINED__
 #include <windows.graphics.capture.interop.h>
+#include <d3d11_4.h>
 #include <array>
 #include <chrono>
+#include <exception>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -138,11 +140,14 @@ inline std::vector<Monitor> monitors() {
 struct Device {
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context;
-    std::mutex use;
     explicit Device(IDXGIAdapter* adapter) {
         check(D3D11CreateDevice(adapter, adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE,
               nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
               &device, nullptr, &context), "Cannot create capture graphics device");
+        // Monitors capture in parallel on one device, so its context must serialize calls itself.
+        ComPtr<ID3D11Multithread> multithread;
+        check(context.As(&multithread), "Cannot share capture graphics device");
+        multithread->SetMultithreadProtected(TRUE);
     }
 };
 
@@ -384,7 +389,6 @@ inline Frame capture_item_frame(Device& device, Direct3DAbi::IDirect3DDevice* ru
 inline Frame capture_wgc(const Monitor& monitor, HWND own_test_window = nullptr) {
     Runtime runtime;
     const auto shared = shared_device(monitor.adapter.Get());
-    std::lock_guard<std::mutex> guard(shared->use);
     ComPtr<IDXGIDevice> dxgi;
     check(shared->device.As(&dxgi), "Cannot access capture device");
     ComPtr<IInspectable> inspectable;
@@ -411,7 +415,6 @@ inline Frame capture_wgc(const Monitor& monitor, HWND own_test_window = nullptr)
 
 inline Frame capture_dxgi(const Monitor& monitor) {
     const auto shared = shared_device(monitor.adapter.Get());
-    std::lock_guard<std::mutex> guard(shared->use);
     Device& device = *shared;
     ComPtr<IDXGIOutput5> output;
     check(monitor.output.As(&output), "HDR-capable Desktop Duplication is unavailable");
@@ -503,12 +506,21 @@ inline Frame capture(const Monitor& monitor, CaptureBackend backend) {
 
 inline CapturedInput capture_desktop(const std::vector<Monitor>& displays, CaptureBackend backend) {
     desktop_bounds(displays);
-    std::vector<Frame> frames;
-    frames.reserve(displays.size());
-    for (const auto& monitor : displays) {
-        try { frames.push_back(capture(monitor, backend)); }
+    std::vector<Frame> frames(displays.size());
+    std::vector<std::exception_ptr> errors(displays.size());
+    const auto run = [&](std::size_t i) {
+        try { frames[i] = capture(displays[i], backend); }
+        catch (...) { errors[i] = std::current_exception(); }
+    };
+    std::vector<NativeWork> jobs(displays.size() - 1);
+    for (std::size_t i = 1; i < displays.size(); ++i) jobs[i-1].start([&run, i] { run(i); });
+    run(0);
+    for (auto& job : jobs) job.join();
+    for (std::size_t i = 0; i < displays.size(); ++i) {
+        if (!errors[i]) continue;
+        try { std::rethrow_exception(errors[i]); }
         catch (const std::exception& error) {
-            throw std::runtime_error(narrow(monitor_label(monitor)) + ": " + error.what());
+            throw std::runtime_error(narrow(monitor_label(displays[i])) + ": " + error.what());
         }
     }
     return compose_desktop(displays, frames);
