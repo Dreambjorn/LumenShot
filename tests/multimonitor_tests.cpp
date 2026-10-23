@@ -132,7 +132,7 @@ int wmain(int argc,wchar_t** argv) try {
     const auto bounds=desktop_bounds(displays);
     require(EqualRect(&captured.bounds,&bounds),"All-monitor option did not capture the complete virtual desktop");
     require(captured.frame.regions.size()==displays.size(),"A connected monitor was omitted");
-    auto preview=render_sdr(captured.frame,settings.color);
+    auto preview=captured.sdr.bgra.empty()?render_sdr(captured.frame,settings.color):captured.sdr;
     for(std::size_t i=0;i<displays.size();++i) {
         const auto rect=displays[i].bounds;
         const unsigned x=unsigned((rect.left+rect.right)/2-bounds.left),y=unsigned((rect.top+rect.bottom)/2-bounds.top);

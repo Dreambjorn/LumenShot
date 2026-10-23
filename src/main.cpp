@@ -115,11 +115,13 @@ CapturedInput capture_input(const Settings& settings,HMONITOR foreground) {
     else found=std::find_if(displays.begin(),displays.end(),
         [&](const Monitor& monitor){return monitor.handle==foreground;});
     if(found==displays.end()) throw std::runtime_error("Selected monitor is no longer connected. Restart settings.");
-    return {capture(*found,settings.backend),found->bounds};
+    CapturedInput input;input.bounds=found->bounds;
+    input.frame=capture(*found,settings.backend,&input.sdr);
+    return input;
 }
 // Sharpening waits for the crop; a full-screen pass delayed the selector by over 100 ms.
-void prepare_preview(WorkResult& result,const Settings& settings) {
-    result.preview=render_sdr(result.frame,settings.color);
+void prepare_preview(WorkResult& result,const Settings& settings,Image sdr={}) {
+    result.preview=sdr.bgra.empty()?render_sdr(result.frame,settings.color):std::move(sdr);
 }
 // Sharpening reads each neighbour, so a one-pixel margin keeps a crop equal to a full-image pass.
 RECT sharpen_margin(RECT rect,const Image& image,const Settings& settings) {
@@ -172,10 +174,12 @@ WorkResult process_output(const Settings& settings,const Frame& frame,const Imag
 WorkResult process_capture(const Settings& settings,HMONITOR foreground,const std::filesystem::path& imported) {
     Runtime runtime;
     WorkResult input;
-    input.frame=imported.empty()?capture_input(settings,foreground).frame:load_master(imported);
+    Image sdr;
+    if(imported.empty()) {auto captured=capture_input(settings,foreground);input.frame=std::move(captured.frame);sdr=std::move(captured.sdr);}
+    else input.frame=load_master(imported);
     Settings snapshot=settings;
     if(!imported.empty() && snapshot.color.mode==ContentMode::Auto) snapshot.color.mode=ContentMode::Hdr;
-    prepare_preview(input,snapshot);
+    prepare_preview(input,snapshot,std::move(sdr));
     Image converted=std::move(input.preview);
     if(settings.scale!=100) scale_image(converted,settings.scale,settings.sharpness);
     else sharpen_image(converted,settings.sharpness);
@@ -493,7 +497,7 @@ struct App {
                 Runtime runtime;
                 auto captured=capture_input(snapshot,foreground);
                 result={};result.frame=std::move(captured.frame);result.bounds=captured.bounds;
-                prepare_preview(result,snapshot);result.needs_selection=true;
+                prepare_preview(result,snapshot,std::move(captured.sdr));result.needs_selection=true;
             }
             catch (const std::exception& error) { result={};result.status=L"Screenshot failed";result.details=widen(error.what()); }
             PostMessageW(window,done_message,0,0);

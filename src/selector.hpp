@@ -57,6 +57,8 @@ inline Frame crop_frame(const Frame& source,RECT rect) {
             result.hdr=result.hdr || region.hdr;
         }
     }
+    // An all-SDR capture has no float pixels; HDR consumers reject the empty crop.
+    if(source.pixels.empty()) return result;
     result.pixels.resize(checked_pixels(result.width,result.height));
     for(unsigned y=0;y<result.height;++y)
         std::copy_n(source.pixels.begin()+std::size_t(y+rect.top)*source.width+rect.left,

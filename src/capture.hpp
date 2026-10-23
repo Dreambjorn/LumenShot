@@ -172,9 +172,10 @@ inline const std::vector<float>& half_lookup() {
     return table;
 }
 
+// With sdr set, 8-bit SDR pixels go there unconverted and the frame keeps no float pixels.
 inline Frame read_texture(Device& device, ID3D11Texture2D* texture, bool hdr,
                           double sdr_white, const std::wstring& backend,
-                          unsigned crop_width = 0, unsigned crop_height = 0) {
+                          unsigned crop_width = 0, unsigned crop_height = 0, Image* sdr = nullptr) {
     D3D11_TEXTURE2D_DESC desc{};
     texture->GetDesc(&desc);
     const bool fp16 = desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
@@ -186,7 +187,13 @@ inline Frame read_texture(Device& device, ID3D11Texture2D* texture, bool hdr,
     frame.width = crop_width ? std::min(crop_width, desc.Width) : desc.Width;
     frame.height = crop_height ? std::min(crop_height, desc.Height) : desc.Height;
     frame.hdr = hdr; frame.sdr_white = sdr_white; frame.backend = backend;
-    frame.pixels.resize(checked_pixels(frame.width, frame.height));
+    if (sdr) *sdr = {};
+    if (!bgra || hdr) sdr = nullptr;
+    if (sdr) {
+        sdr->width = frame.width; sdr->height = frame.height; sdr->description = L"SDR preserved";
+        sdr->bgra.resize(checked_pixels(frame.width, frame.height) * 4);
+    }
+    else frame.pixels.resize(checked_pixels(frame.width, frame.height));
     desc.Usage = D3D11_USAGE_STAGING;
     desc.BindFlags = 0; desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ; desc.MiscFlags = 0;
     ComPtr<ID3D11Texture2D> staging;
@@ -198,6 +205,12 @@ inline Frame read_texture(Device& device, ID3D11Texture2D* texture, bool hdr,
     const auto& bytes = srgb_lookup();
     for (unsigned y = 0; y < frame.height; ++y) {
         const auto* row = static_cast<const std::uint8_t*>(mapped.pData) + std::size_t(y)*mapped.RowPitch;
+        if (sdr) {
+            auto* out = sdr->bgra.data() + std::size_t(y)*frame.width*4;
+            std::memcpy(out, row, std::size_t(frame.width)*4);
+            for (unsigned x = 0; x < frame.width; ++x) out[x*4+3] = 255;
+            continue;
+        }
         Pixel* out = frame.pixels.data() + std::size_t(y)*frame.width;
         if (fp16) {
             for (unsigned x = 0; x < frame.width; ++x) {
@@ -332,7 +345,7 @@ inline void warm_capture() {
 struct CaptureTimeout : std::runtime_error { using std::runtime_error::runtime_error; };
 
 inline Frame capture_item_frame(Device& device, Direct3DAbi::IDirect3DDevice* runtime_device,
-                                CaptureAbi::IGraphicsCaptureItem* item, const Monitor& monitor) {
+                                CaptureAbi::IGraphicsCaptureItem* item, const Monitor& monitor, Image* sdr) {
     ABI::Windows::Graphics::SizeInt32 size{};
     check(item->get_Size(&size), "Cannot read capture dimensions");
     if (size.Width <= 0 || size.Height <= 0) throw std::runtime_error("Capture target has no visible size.");
@@ -372,12 +385,12 @@ inline Frame capture_item_frame(Device& device, Direct3DAbi::IDirect3DDevice* ru
     ComPtr<ID3D11Texture2D> texture;
     check(access->GetInterface(IID_PPV_ARGS(&texture)), "Cannot access captured texture");
     Frame result = read_texture(device, texture.Get(), monitor.hdr, monitor.sdr_white,
-                                L"Windows Graphics Capture", unsigned(content.Width), unsigned(content.Height));
+                                L"Windows Graphics Capture", unsigned(content.Width), unsigned(content.Height), sdr);
     close_runtime_object(frame.Get());
     return result;
 }
 
-inline Frame capture_wgc(const Monitor& monitor, HWND own_test_window = nullptr) {
+inline Frame capture_wgc(const Monitor& monitor, HWND own_test_window = nullptr, Image* sdr = nullptr) {
     Runtime runtime;
     const auto shared = shared_device(monitor.adapter.Get());
     ComPtr<IDXGIDevice> dxgi;
@@ -390,21 +403,21 @@ inline Frame capture_wgc(const Monitor& monitor, HWND own_test_window = nullptr)
     if (own_test_window) {
         ComPtr<CaptureAbi::IGraphicsCaptureItem> item;
         check(interop->CreateForWindow(own_test_window, IID_PPV_ARGS(&item)), "Cannot select test window");
-        return capture_item_frame(*shared, runtime_device.Get(), item.Get(), monitor);
+        return capture_item_frame(*shared, runtime_device.Get(), item.Get(), monitor, sdr);
     }
     bool cached = false;
     const auto item = capture_item(interop.Get(), monitor, cached);
-    try { return capture_item_frame(*shared, runtime_device.Get(), item.Get(), monitor); }
+    try { return capture_item_frame(*shared, runtime_device.Get(), item.Get(), monitor, sdr); }
     catch (const CaptureTimeout&) { throw; }
     catch (const std::exception&) {
         // A cached item can outlive its monitor; retry once with a fresh one.
         if (!cached) throw;
         forget_capture_items();
-        return capture_item_frame(*shared, runtime_device.Get(), capture_item(interop.Get(), monitor, cached).Get(), monitor);
+        return capture_item_frame(*shared, runtime_device.Get(), capture_item(interop.Get(), monitor, cached).Get(), monitor, sdr);
     }
 }
 
-inline Frame capture_dxgi(const Monitor& monitor) {
+inline Frame capture_dxgi(const Monitor& monitor, Image* sdr = nullptr) {
     const auto shared = shared_device(monitor.adapter.Get());
     Device& device = *shared;
     ComPtr<IDXGIOutput5> output;
@@ -438,10 +451,19 @@ inline Frame capture_dxgi(const Monitor& monitor) {
         throw std::runtime_error("Windows excluded protected content from this screenshot.");
     ComPtr<ID3D11Texture2D> texture;
     check(resource.As(&texture), "Cannot access duplicated texture");
-    return read_texture(device, texture.Get(), monitor.hdr, monitor.sdr_white, L"Desktop Duplication");
+    return read_texture(device, texture.Get(), monitor.hdr, monitor.sdr_white, L"Desktop Duplication", 0, 0, sdr);
 }
 
-struct CapturedInput { Frame frame; RECT bounds{}; };
+// When every monitor is SDR, sdr holds the exact preview and the frame carries no float pixels.
+struct CapturedInput { Frame frame; RECT bounds{}; Image sdr; };
+
+inline std::vector<Pixel> decode_sdr(const Image& image) {
+    const auto& bytes = srgb_lookup();
+    std::vector<Pixel> pixels(checked_pixels(image.width, image.height));
+    for (std::size_t i = 0; i < pixels.size(); ++i)
+        pixels[i] = {bytes[image.bgra[i*4+2]], bytes[image.bgra[i*4+1]], bytes[image.bgra[i*4]], 1};
+    return pixels;
+}
 
 inline RECT desktop_bounds(const std::vector<Monitor>& displays) {
     if (displays.empty()) throw std::runtime_error("No active monitor was found.");
@@ -477,17 +499,17 @@ inline CapturedInput compose_desktop(const std::vector<Monitor>& displays, const
         result.regions.push_back({x,y,frame.width,frame.height,frame.hdr,frame.sdr_white});
         result.hdr = result.hdr || frame.hdr;
     }
-    return {std::move(result),bounds};
+    return {std::move(result),bounds,{}};
 }
 
 enum class CaptureBackend { Auto, Windows, Desktop };
 
-inline Frame capture(const Monitor& monitor, CaptureBackend backend) {
-    if (backend == CaptureBackend::Windows) return capture_wgc(monitor);
-    if (backend == CaptureBackend::Desktop) return capture_dxgi(monitor);
-    try { return capture_wgc(monitor); }
+inline Frame capture(const Monitor& monitor, CaptureBackend backend, Image* sdr = nullptr) {
+    if (backend == CaptureBackend::Windows) return capture_wgc(monitor, nullptr, sdr);
+    if (backend == CaptureBackend::Desktop) return capture_dxgi(monitor, sdr);
+    try { return capture_wgc(monitor, nullptr, sdr); }
     catch (const std::exception& wgc_error) {
-        try { return capture_dxgi(monitor); }
+        try { return capture_dxgi(monitor, sdr); }
         catch (const std::exception& dxgi_error) {
             throw std::runtime_error(std::string("Windows capture: ") + wgc_error.what()
                 + "\nDesktop capture: " + dxgi_error.what());
@@ -496,11 +518,12 @@ inline Frame capture(const Monitor& monitor, CaptureBackend backend) {
 }
 
 inline CapturedInput capture_desktop(const std::vector<Monitor>& displays, CaptureBackend backend) {
-    desktop_bounds(displays);
+    const RECT bounds = desktop_bounds(displays);
     std::vector<Frame> frames(displays.size());
+    std::vector<Image> sdr(displays.size());
     std::vector<std::exception_ptr> errors(displays.size());
     const auto run = [&](std::size_t i) {
-        try { frames[i] = capture(displays[i], backend); }
+        try { frames[i] = capture(displays[i], backend, &sdr[i]); }
         catch (...) { errors[i] = std::current_exception(); }
     };
     std::vector<NativeWork> jobs(displays.size() - 1);
@@ -514,7 +537,31 @@ inline CapturedInput capture_desktop(const std::vector<Monitor>& displays, Captu
             throw std::runtime_error(narrow(monitor_label(displays[i])) + ": " + error.what());
         }
     }
-    return compose_desktop(displays, frames);
+    if (std::any_of(sdr.begin(), sdr.end(), [](const Image& image) { return image.bgra.empty(); })) {
+        for (std::size_t i = 0; i < frames.size(); ++i)
+            if (!sdr[i].bgra.empty()) frames[i].pixels = decode_sdr(sdr[i]);
+        return compose_desktop(displays, frames);
+    }
+    CapturedInput result;
+    result.bounds = bounds;
+    Frame& frame = result.frame;
+    frame.width = unsigned(bounds.right - bounds.left); frame.height = unsigned(bounds.bottom - bounds.top);
+    frame.backend = L"All monitors";
+    Image& image = result.sdr;
+    image.width = frame.width; image.height = frame.height; image.description = L"Per-monitor HDR/SDR conversion";
+    image.bgra.assign(checked_pixels(image.width, image.height) * 4, 0);
+    for (std::size_t i = 3; i < image.bgra.size(); i += 4) image.bgra[i] = 255;
+    for (std::size_t i = 0; i < frames.size(); ++i) {
+        const auto& source = sdr[i]; const auto& rect = displays[i].bounds;
+        if (source.width != unsigned(rect.right - rect.left) || source.height != unsigned(rect.bottom - rect.top))
+            throw std::runtime_error("Monitor layout changed during capture. Try again.");
+        const unsigned x = unsigned(rect.left - bounds.left), y = unsigned(rect.top - bounds.top);
+        for (unsigned row = 0; row < source.height; ++row)
+            std::memcpy(image.bgra.data() + (std::size_t(y + row) * image.width + x) * 4,
+                        source.bgra.data() + std::size_t(row) * source.width * 4, std::size_t(source.width) * 4);
+        frame.regions.push_back({x,y,source.width,source.height,false,frames[i].sdr_white});
+    }
+    return result;
 }
 
 } // namespace hdrshot
