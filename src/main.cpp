@@ -37,7 +37,7 @@ struct Settings {
 struct WorkResult {
     std::wstring status, details;
     bool success = false, canceled = false;
-    Image preview, clipboard, original_preview;
+    Image preview, clipboard;
     Frame frame;
     RECT bounds{};
     bool needs_selection=false;
@@ -117,11 +117,15 @@ CapturedInput capture_input(const Settings& settings,HMONITOR foreground) {
     if(found==displays.end()) throw std::runtime_error("Selected monitor is no longer connected. Restart settings.");
     return {capture(*found,settings.backend),found->bounds};
 }
+// Sharpening waits for the crop; a full-screen pass delayed the selector by over 100 ms.
 void prepare_preview(WorkResult& result,const Settings& settings) {
     result.preview=render_sdr(result.frame,settings.color);
-    result.original_preview={};
-    if(settings.scale!=100) result.original_preview=result.preview;
-    sharpen_image(result.preview,settings.sharpness);
+}
+// Sharpening reads each neighbour, so a one-pixel margin keeps a crop equal to a full-image pass.
+RECT sharpen_margin(RECT rect,const Image& image,const Settings& settings) {
+    if(settings.scale!=100 || !settings.sharpness) return rect;
+    return {std::max(0l,rect.left-1),std::max(0l,rect.top-1),
+            std::min(LONG(image.width),rect.right+1),std::min(LONG(image.height),rect.bottom+1)};
 }
 WorkResult process_output(const Settings& settings,const Frame& frame,const Image& converted,
                           const std::filesystem::path& imported={},bool clipboard=false,const Image* hdr_base=nullptr) {
@@ -172,8 +176,9 @@ WorkResult process_capture(const Settings& settings,HMONITOR foreground,const st
     Settings snapshot=settings;
     if(!imported.empty() && snapshot.color.mode==ContentMode::Auto) snapshot.color.mode=ContentMode::Hdr;
     prepare_preview(input,snapshot);
-    Image converted=settings.scale==100?std::move(input.preview):std::move(input.original_preview);
+    Image converted=std::move(input.preview);
     if(settings.scale!=100) scale_image(converted,settings.scale,settings.sharpness);
+    else sharpen_image(converted,settings.sharpness);
     if(settings.keep_original && input.frame.hdr) enhance_hdr(input.frame,settings.scale,settings.sharpness);
     return process_output(settings,input.frame,converted,imported);
 }
@@ -506,13 +511,15 @@ struct App {
             SelectionResult selected;
             Image converted;
             Frame cropped;
+            RECT margin{};
             {
                 RegionSelector selector(std::move(result.preview));
                 active_selector=&selector;
                 struct ClearSelector {RegionSelector*& value;~ClearSelector(){value=nullptr;}} clear{active_selector};
                 selected=selector.run(window,result.bounds);
                 if(selected.action!=SelectionAction::Cancel) {
-                    converted=crop_image(capture_settings.scale==100?selector.image():result.original_preview,selected.rect);
+                    margin=sharpen_margin(selected.rect,selector.image(),capture_settings);
+                    converted=crop_image(selector.image(),margin);
                     cropped=crop_frame(result.frame,selected.rect);
                 }
             }
@@ -520,10 +527,15 @@ struct App {
             if(selected.action!=SelectionAction::Cancel) {
                 const Settings snapshot=capture_settings;
                 busy=true;
-                worker.start([this,snapshot,selected,cropped=std::move(cropped),converted=std::move(converted)]() mutable {
+                worker.start([this,snapshot,selected,margin,cropped=std::move(cropped),converted=std::move(converted)]() mutable {
                     try {
                         Runtime runtime;
                         if(snapshot.scale!=100) scale_image(converted,snapshot.scale,snapshot.sharpness);
+                        else if(snapshot.sharpness) {
+                            sharpen_image(converted,snapshot.sharpness);
+                            converted=crop_image(converted,{selected.rect.left-margin.left,selected.rect.top-margin.top,
+                                                            selected.rect.right-margin.left,selected.rect.bottom-margin.top});
+                        }
                         if(snapshot.keep_original && cropped.hdr) enhance_hdr(cropped,snapshot.scale,snapshot.sharpness);
                         Image hdr_base;
                         if(snapshot.keep_original && cropped.hdr && snapshot.hdr_format==HdrFormat::UltraJpeg && !selected.marks.empty())
