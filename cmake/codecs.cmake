@@ -1,8 +1,8 @@
 # Pinned static codecs, downloaded once into the tools folder and built with the project compiler.
-if(NOT HDRSHOT_TOOLS)
-    get_filename_component(HDRSHOT_TOOLS "${CMAKE_SOURCE_DIR}/../tools" ABSOLUTE)
+if(NOT LUMENSHOT_TOOLS)
+    get_filename_component(LUMENSHOT_TOOLS "${CMAKE_SOURCE_DIR}/../tools" ABSOLUTE)
 endif()
-set(downloads "${HDRSHOT_TOOLS}/downloads")
+set(downloads "${LUMENSHOT_TOOLS}/downloads")
 set(codec_args
     -G Ninja
     -DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
