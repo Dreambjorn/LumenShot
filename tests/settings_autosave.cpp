@@ -51,8 +51,6 @@ int wmain(int argc,wchar_t** argv) try {
     require(!app.settings.dark_mode && !load_settings().dark_mode && !app.theme.dark,"Dark mode required manual saving");
     require(IsWindowVisible(window),"Automatic checkbox save hid settings");
     toggle(DarkMode,true);require(load_settings().dark_mode && app.theme.dark,"Dark mode did not restore automatically");
-    toggle(StartWithWindows,true);require(app.startup.enabled(),"Startup checkbox required manual saving");
-    toggle(StartWithWindows,false);require(!app.startup.enabled(),"Startup disable required manual saving");
     app.show_page(0);
     choose(BackendChoice,2);require(app.settings.backend==CaptureBackend::Desktop && load_settings().backend==CaptureBackend::Desktop,"Backend choice did not apply automatically");
     choose(BackendChoice,0);

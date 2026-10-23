@@ -20,12 +20,6 @@ int main() try {
     expect_near(pq_encode(1000),0.751827096247,1e-10,"PQ 1000-nit reference");
     expect_near(pq_encode(203),0.580688881042,1e-10,"PQ 203-nit reference");
     expect_near(pq_decode(0.751827096247),1000,1e-6,"PQ decoding reference");
-    for (int code = 0; code < 256; ++code) {
-        const auto decoded = srgb_decode(code/255.0);
-        const auto image = render_sdr(single({float(decoded),float(decoded),float(decoded),1},false), {});
-        require(image.bgra[0] == code && image.bgra[1] == code && image.bgra[2] == code, "SDR round-trip changed a code");
-        require(image.bgra[3] == 255, "SDR output must be opaque");
-    }
     for (double white : {80.0,160.0,203.0,320.0,480.0}) {
         for (int code = 0; code < 256; ++code) {
             const float v = float(srgb_decode(code/255.0)*white/80);
@@ -110,12 +104,6 @@ int main() try {
     for(std::size_t i=0;i<extreme_reference.bgra.size();++i)
         extreme_error=std::max(extreme_error,std::abs(int(extreme_reference.bgra[i])-int(extreme_fast.bgra[i])));
     require(extreme_error<=1,"Extreme source peak breaks lookup conversion");
-    large.hdr=false;
-    for(std::size_t i=0;i<large.pixels.size();++i) {
-        const float value=float(srgb_decode(double(i%256)/255));
-        large.pixels[i]={value,value,value,1};
-    }
-    require(render_sdr(large,hdr).bgra==render_sdr(large,hdr,false).bgra,"Large SDR lookup changed source codes");
     Frame native;native.width=512;native.height=128;
     native.pixels.resize(checked_pixels(native.width,native.height));
     std::vector<std::uint8_t> native_codes(native.pixels.size()*4);

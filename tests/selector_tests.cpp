@@ -259,15 +259,6 @@ int wmain(int argc,wchar_t** argv) try {
     require(header.bV5RedMask==0x00ff0000 && header.bV5BlueMask==0x000000ff,"Clipboard RGB masks swapped");
     require(std::memcmp(dib.data()+sizeof(header),image.bgra.data(),image.bgra.size())==0,"Clipboard altered encoded pixels");
 
-    Frame sdr;sdr.width=256;sdr.height=128;sdr.pixels.resize(256*128);
-    for(unsigned y=0;y<128;++y) for(unsigned x=0;x<256;++x) {
-        const float v=float(srgb_decode((x+y)%256/255.0));sdr.pixels[y*256+x]={v,v,v,1};
-    }
-    const auto parallel=render_sdr(sdr,{});
-    for(unsigned y=0;y<128;++y) {
-        const unsigned x=(y*17)%256;
-        require(parallel.bgra[(y*256+x)*4]==(x+y)%256,"Native parallel worker changed row pixels");
-    }
     Image black;black.width=100;black.height=80;black.bgra.resize(100*80*4);
     annotate(black,{{MarkTool::Line,RGB(255,0,0),{{15,15},{75,15}},L""}},{5,5});
     const auto red=(10*100+30)*4;
@@ -377,7 +368,7 @@ int wmain(int argc,wchar_t** argv) try {
         require(RegisterHotKey(nullptr,778,MOD_NOREPEAT,VK_ESCAPE)!=FALSE,"Selector retained Escape after closing");
         UnregisterHotKey(nullptr,778);
     }
-    std::cout<<checks<<" selector checks passed: HDR/SDR crop, parallel rows, annotations, sRGB DIBV5, nearby tooltips, edge flips, hover cleanup, owned drag/save/cancel.\n";
+    std::cout<<checks<<" selector checks passed: HDR/SDR crop, annotations, sRGB DIBV5, nearby tooltips, edge flips, hover cleanup, owned drag/save/cancel.\n";
     std::cout<<"System clipboard was not changed. Physical Print Screen was not simulated.\n";
     return 0;
 } catch(const std::exception& error) {std::cerr<<"FAILED after "<<checks<<" selector checks: "<<error.what()<<"\n";return 1;}

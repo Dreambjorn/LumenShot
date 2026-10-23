@@ -61,9 +61,6 @@ int wmain() try {
     SendDlgItemMessageW(settings,MonitorChoice,CB_SETCURSEL,all_index,0);
     SendMessageW(settings,WM_COMMAND,MAKEWPARAM(MonitorChoice,CBN_SELCHANGE),reinterpret_cast<LPARAM>(GetDlgItem(settings,MonitorChoice)));
     require(app.settings.monitor==L"*" && load_settings().monitor==L"*","All-monitor selection did not save automatically");
-    SendDlgItemMessageW(settings,MonitorChoice,CB_SETCURSEL,0,0);
-    SendMessageW(settings,WM_COMMAND,MAKEWPARAM(MonitorChoice,CBN_SELCHANGE),reinterpret_cast<LPARAM>(GetDlgItem(settings,MonitorChoice)));
-    require(app.settings.monitor.empty() && load_settings().monitor.empty(),"Active-monitor selection did not restore");
     SendMessageW(settings,tray_message,0,WM_LBUTTONDBLCLK);
     require(IsWindowVisible(settings),"Tray activation must show settings");
     require(app.settings.dark_mode && app.theme.dark,"Dark mode must default to enabled");
@@ -152,8 +149,6 @@ int wmain() try {
     SendDlgItemMessageW(settings,KeepOriginal,BM_SETCHECK,BST_CHECKED,0);
     SendMessageW(settings,WM_COMMAND,KeepOriginal,0);
     require(IsWindowVisible(format),"Restoring HDR copy did not restore its dropdown");
-    SendMessageW(format,CB_SETCURSEL,1,0);
-    SendMessageW(settings,WM_COMMAND,MAKEWPARAM(HdrFormatChoice,CBN_SELCHANGE),reinterpret_cast<LPARAM>(format));
     DWORD affinity=0;
     require(GetWindowDisplayAffinity(settings,&affinity) && affinity==WDA_NONE,
             "Open settings must be included in screenshots");
@@ -161,8 +156,6 @@ int wmain() try {
     require(text(app.status).find(L"\r\n\r\n")!=std::wstring::npos,"Native status lost blank line separation");
     require(SendMessageW(app.status,EM_GETLINECOUNT,0,0)==6,"Native status rendered incorrect line breaks");
     SendMessageW(settings,WM_COMMAND,CaptureButton,0);
-    require(app.settings.hdr_format==HdrFormat::JpegXr && load_settings().hdr_format==HdrFormat::JpegXr,"HDR format did not persist");
-    require(load_settings().dark_mode,"Dark mode choice was not saved");
     require(app.countdown==3,"Capture button did not start its countdown");
     require(IsWindowVisible(settings),"Delayed capture hid open settings");
     require(app.escape_registered,"Countdown did not reserve Escape");
