@@ -172,15 +172,6 @@ inline const std::vector<float>& half_lookup() {
     return table;
 }
 
-inline const std::array<float, 256>& srgb_lookup() {
-    static const std::array<float, 256> table = [] {
-        std::array<float, 256> values{};
-        for (unsigned i = 0; i < 256; ++i) values[i] = float(srgb_decode(i / 255.0));
-        return values;
-    }();
-    return table;
-}
-
 inline Frame read_texture(Device& device, ID3D11Texture2D* texture, bool hdr,
                           double sdr_white, const std::wstring& backend,
                           unsigned crop_width = 0, unsigned crop_height = 0) {

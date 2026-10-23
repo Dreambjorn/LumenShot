@@ -60,6 +60,35 @@ inline double srgb_encode(double value) {
     return value <= 0.0031308 ? 12.92 * value : 1.055 * std::pow(value, 1.0 / 2.4) - 0.055;
 }
 
+inline const std::array<float, 256>& srgb_lookup() {
+    static const std::array<float, 256> table = [] {
+        std::array<float, 256> values{};
+        for (unsigned i = 0; i < 256; ++i) values[i] = float(srgb_decode(i / 255.0));
+        return values;
+    }();
+    return table;
+}
+
+// Returns the 8-bit code whose decode is exactly this value, or -1. A float's top 17 bits hold at most one code.
+inline int srgb_code(float value) {
+    struct Buckets { std::uint32_t first = 0; std::vector<std::int16_t> codes; };
+    static const Buckets buckets = [] {
+        const auto key = [](float v) { std::uint32_t bits; std::memcpy(&bits, &v, 4); return bits >> 15; };
+        Buckets result;
+        result.first = key(srgb_lookup()[1]);
+        result.codes.assign(key(1.0f) - result.first + 1, -1);
+        for (int i = 1; i < 256; ++i) result.codes[key(srgb_lookup()[i]) - result.first] = std::int16_t(i);
+        return result;
+    }();
+    std::uint32_t bits;
+    std::memcpy(&bits, &value, 4);
+    if (!bits) return 0;
+    const std::uint32_t index = (bits >> 15) - buckets.first;
+    if (index >= buckets.codes.size()) return -1;
+    const int code = buckets.codes[index];
+    return code >= 0 && srgb_lookup()[code] == value ? code : -1;
+}
+
 inline double luminance(Rgb value) {
     return 0.2126390059 * value.r + 0.7151686788 * value.g + 0.0721923154 * value.b;
 }
@@ -289,10 +318,23 @@ inline Image render_sdr(const Frame& frame, const ColorSettings& settings, bool 
     const ToneCurve curve(peak);
     const RenderLookup lookup(curve,peak,use_lookup && count>=65536,!sdr);
     static constexpr int bayer[16] = {0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5};
+    // SDR captures hold exact 8-bit decodes, so their codes come from a table built with the same math.
+    std::array<std::uint8_t, 256> codes{};
+    if (!frame.hdr)
+        for (unsigned i = 0; i < 256; ++i)
+            codes[i] = std::uint8_t(std::clamp(std::lround(lookup.encode(std::clamp(double(srgb_lookup()[i]), 0.0, 1.0)) * 255), 0l, 255l));
     auto rows = [&](unsigned first, unsigned last) {
         for (unsigned y = first; y < last; ++y) for (unsigned x = 0; x < frame.width; ++x) {
             const std::size_t index = std::size_t(y) * frame.width + x;
             const Pixel& p = frame.pixels[index];
+            if (!frame.hdr) {
+                const int r = srgb_code(p.r), g = srgb_code(p.g), b = srgb_code(p.b);
+                if (r >= 0 && g >= 0 && b >= 0) {
+                    image.bgra[index*4] = codes[b]; image.bgra[index*4+1] = codes[g];
+                    image.bgra[index*4+2] = codes[r]; image.bgra[index*4+3] = 255;
+                    continue;
+                }
+            }
             Rgb color = Rgb{p.r,p.g,p.b} * gain;
             if (!sdr) {
                 const double old_y = luminance(color);
