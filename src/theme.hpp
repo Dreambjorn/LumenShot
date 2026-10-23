@@ -31,6 +31,21 @@ public:
     void border(HDC dc,RECT rect,COLORREF color) const {
         HBRUSH brush=CreateSolidBrush(color);FrameRect(dc,&rect,brush);DeleteObject(brush);
     }
+    struct CheckboxLayout {RECT box,label;};
+    static CheckboxLayout checkbox_layout(HDC dc,const RECT& rect,const wchar_t* title) {
+        SIZE size{};GetTextExtentPoint32W(dc,title,lstrlenW(title),&size);
+        return {{0,(rect.bottom-16)/2,16,(rect.bottom+16)/2},
+                {24,(rect.bottom-size.cy)/2,24+size.cx,(rect.bottom-size.cy)/2+size.cy}};
+    }
+    static bool checkbox_hit(HWND window,LPARAM point) {
+        RECT rect{};GetClientRect(window,&rect);wchar_t title[1024]{};GetWindowTextW(window,title,1024);
+        HDC dc=GetDC(window);
+        HGDIOBJ font=SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(window,WM_GETFONT,0,0)));
+        const auto layout=checkbox_layout(dc,rect,title);
+        SelectObject(dc,font);ReleaseDC(window,dc);
+        const POINT position{GET_X_LPARAM(point),GET_Y_LPARAM(point)};
+        return PtInRect(&layout.box,position) || PtInRect(&layout.label,position);
+    }
     void paint(HWND window,HDC dc) const {
         RECT rect{};GetClientRect(window,&rect);SetBkMode(dc,TRANSPARENT);
         SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(window,WM_GETFONT,0,0)));
@@ -72,7 +87,7 @@ public:
         }
         const LONG_PTR style=GetWindowLongPtrW(window,GWL_STYLE)&BS_TYPEMASK;
         if(style==BS_AUTOCHECKBOX) {
-            RECT box{0,(rect.bottom-16)/2,16,(rect.bottom+16)/2};
+            auto layout=checkbox_layout(dc,rect,title);const RECT box=layout.box;
             const bool checked=SendMessageW(window,BM_GETCHECK,0,0)==BST_CHECKED;
             fill(dc,box,checked?colors.accent:colors.input);border(dc,box,checked?colors.accent:colors.border);
             if(checked) {
@@ -80,7 +95,7 @@ public:
                 MoveToEx(dc,box.left+3,box.top+8,nullptr);LineTo(dc,box.left+7,box.top+12);LineTo(dc,box.left+13,box.top+4);
                 SelectObject(dc,old);DeleteObject(pen);
             }
-            RECT label=rect;label.left=24;DrawTextW(dc,title,-1,&label,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+            DrawTextW(dc,title,-1,&layout.label,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
         } else {
             const bool pressed=SendMessageW(window,BM_GETSTATE,0,0)&BST_PUSHED;
             fill(dc,rect,pressed?colors.selection:colors.input);
@@ -90,8 +105,8 @@ public:
         if(GetFocus()==window) {
             RECT focus=rect;
             if(style==BS_AUTOCHECKBOX) {
-                SIZE size{};GetTextExtentPoint32W(dc,title,lstrlenW(title),&size);
-                focus={22,(rect.bottom-size.cy)/2-1,std::min(rect.right,26+size.cx),(rect.bottom+size.cy)/2+1};
+                focus=checkbox_layout(dc,rect,title).box;InflateRect(&focus,-2,-2);
+                if(SendMessageW(window,WM_QUERYUISTATE,0,0)&UISF_HIDEFOCUS) return;
             } else InflateRect(&focus,-4,-4);
             DrawFocusRect(dc,&focus);
         }
@@ -99,6 +114,14 @@ public:
     static LRESULT CALLBACK control_proc(HWND window,UINT message,WPARAM wp,LPARAM lp,UINT_PTR id,DWORD_PTR data) {
         auto& theme=*reinterpret_cast<NativeTheme*>(data);
         const bool drawn=is(window,L"BUTTON") || is(window,L"COMBOBOX") || is(window,WC_TABCONTROLW) || is(window,TRACKBAR_CLASSW);
+        const bool checkbox=is(window,L"BUTTON") && (GetWindowLongPtrW(window,GWL_STYLE)&BS_TYPEMASK)==BS_AUTOCHECKBOX;
+        if(checkbox && (message==WM_LBUTTONDOWN || message==WM_LBUTTONDBLCLK || message==WM_LBUTTONUP)) {
+            if(!checkbox_hit(window,lp)) {
+                if(message==WM_LBUTTONUP) {DefSubclassProc(window,WM_CANCELMODE,0,0);InvalidateRect(window,nullptr,TRUE);}
+                return 0;
+            }
+            if(message!=WM_LBUTTONUP) SendMessageW(window,WM_CHANGEUISTATE,MAKEWPARAM(UIS_SET,UISF_HIDEFOCUS),0);
+        }
         if(drawn && message==WM_PAINT) {PAINTSTRUCT paint{};HDC dc=BeginPaint(window,&paint);theme.paint(window,dc);EndPaint(window,&paint);return 0;}
         if(drawn && (message==WM_PRINT || message==WM_PRINTCLIENT)) {theme.paint(window,reinterpret_cast<HDC>(wp));return 0;}
         if(drawn && message==WM_ERASEBKGND) {RECT rect{};GetClientRect(window,&rect);FillRect(reinterpret_cast<HDC>(wp),&rect,theme.background);return 1;}
@@ -110,7 +133,7 @@ public:
             ReleaseDC(window,dc);return result;
         }
         const auto result=DefSubclassProc(window,message,wp,lp);
-        if(message==WM_SETFOCUS || message==WM_KILLFOCUS || message==BM_SETCHECK || message==BM_SETSTATE || message==WM_KEYUP || message==WM_LBUTTONUP || message==TCM_SETCURSEL)
+        if(message==WM_SETFOCUS || message==WM_KILLFOCUS || message==BM_SETCHECK || message==BM_SETSTATE || message==WM_KEYUP || message==WM_LBUTTONUP || message==WM_UPDATEUISTATE || message==TCM_SETCURSEL)
             RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_ERASE|RDW_FRAME);
         return result;
     }

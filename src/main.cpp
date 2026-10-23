@@ -7,6 +7,7 @@
 #include "scaling.hpp"
 #include <shellapi.h>
 #include <shlobj.h>
+#include <shobjidl.h>
 #include <commctrl.h>
 #include <atomic>
 #include <fstream>
@@ -570,13 +571,29 @@ struct App {
         if(exit_after_work) DestroyWindow(window);
     }
     void browse() {
-        BROWSEINFOW info{};info.hwndOwner=window;info.lpszTitle=L"Choose screenshot folder";
-        info.ulFlags=BIF_RETURNONLYFSDIRS|BIF_NEWDIALOGSTYLE;
-        PIDLIST_ABSOLUTE item=SHBrowseForFolderW(&info);
-        if (item) {
-            wchar_t path[MAX_PATH];if (SHGetPathFromIDListW(item,path)) SetDlgItemTextW(window,Folder,path);
-            CoTaskMemFree(item);
-        }
+        ComPtr<IFileOpenDialog> dialog;
+        check(CoCreateInstance(CLSID_FileOpenDialog,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&dialog)),
+              "Cannot create screenshot folder picker");
+        FILEOPENDIALOGOPTIONS options{};
+        check(dialog->GetOptions(&options),"Cannot read folder picker options");
+        check(dialog->SetOptions(options|FOS_PICKFOLDERS|FOS_FORCEFILESYSTEM|FOS_PATHMUSTEXIST|FOS_NOCHANGEDIR),
+              "Cannot configure screenshot folder picker");
+        check(dialog->SetTitle(L"Choose screenshot folder"),"Cannot set folder picker title");
+        check(dialog->SetOkButtonLabel(L"Select folder"),"Cannot set folder picker button");
+        std::filesystem::path initial=text(GetDlgItem(window,Folder));std::error_code error;
+        while(initial.has_relative_path() && !std::filesystem::is_directory(initial,error)) initial=initial.parent_path();
+        ComPtr<IShellItem> start;
+        if(initial.is_absolute() && SUCCEEDED(SHCreateItemFromParsingName(initial.c_str(),nullptr,IID_PPV_ARGS(&start))))
+            check(dialog->SetFolder(start.Get()),"Cannot open current screenshot folder");
+        const HRESULT shown=dialog->Show(window);
+        if(shown==HRESULT_FROM_WIN32(ERROR_CANCELLED)) return;
+        check(shown,"Cannot show screenshot folder picker");
+        ComPtr<IShellItem> item;
+        check(dialog->GetResult(&item),"Cannot read selected screenshot folder");
+        PWSTR path=nullptr;
+        check(item->GetDisplayName(SIGDN_FILESYSPATH,&path),"Cannot read selected folder path");
+        struct FreePath {PWSTR value;~FreePath(){CoTaskMemFree(value);}} free_path{path};
+        SetDlgItemTextW(window,Folder,path);
     }
     void tray_menu() {
         POINT point{};GetCursorPos(&point);
@@ -699,7 +716,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int) {
             command_line_mode=true;std::cout<<embedded_notices();return 0;
         }
         if (argc>1 && (wcscmp(argv[1],L"--help")==0 || wcscmp(argv[1],L"--version")==0)) {
-            std::cout<<"LumenShot 0.1.1\nUsage: LumenShot.exe [--settings | --tray | --capture | --import <file.jxr> | --licenses]\n"
+            std::cout<<"LumenShot 0.1.2\nUsage: LumenShot.exe [--settings | --tray | --capture | --import <file.jxr> | --licenses]\n"
                      <<"External Windows capture only. No game injection or game-process access.\n";return 0;
         }
         const bool open_settings=argc>1 && wcscmp(argv[1],L"--settings")==0;
