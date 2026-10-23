@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(LumenShot VERSION 0.1.0 LANGUAGES C CXX RC)
+project(LumenShot VERSION 0.1.1 LANGUAGES C CXX RC)
 include(ExternalProject)
 
 include(cmake/codecs.cmake)
