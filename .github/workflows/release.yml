@@ -1,0 +1,77 @@
+# Builds, tests and publishes a release for the version in CMakeLists.txt. Run by hand only.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: Mark as a pre-release
+        type: boolean
+        default: false
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # previous tags, for the notes
+
+      - name: Read the version
+        id: version
+        run: |
+          set -euo pipefail
+          version=$(sed -nE 's/^project\(LumenShot VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          # The executable's own version resource must agree, or the release lies about its file.
+          grep -qF "\"ProductVersion\", \"$version\\0\"" src/app.rc \
+            || { echo "::error::src/app.rc does not say version $version"; exit 1; }
+          if git rev-parse -q --verify "refs/tags/v$version" > /dev/null; then
+            echo "::error::v$version is already tagged; raise the version first"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: cmake --preset release && cmake --build --preset release
+
+      # Hosted runners have no real display, so the live screen-capture tests stay local.
+      - name: Test
+        run: ctest --preset release --exclude-regex '^(platform_tests|multimonitor_tests)$'
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cp build/LumenShot.exe dist/
+          (cd dist && sha256sum LumenShot.exe > SHA256SUMS.txt)
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="v${{ steps.version.outputs.version }}"
+          prev=$(git tag --list 'v*' --sort=-v:refname | head -1)
+          range=${prev:+$prev..}HEAD
+          {
+            git log --no-merges --format='- %s (%h)' "$range"
+            if [ -n "$prev" ]; then
+              echo
+              echo "**Full changelog**: ${{ github.server_url }}/${{ github.repository }}/compare/$prev...$tag"
+            fi
+          } > notes.md
+          flags=()
+          if [ '${{ inputs.prerelease }}' = 'true' ]; then flags+=(--prerelease); fi
+          gh release create "$tag" dist/LumenShot.exe dist/SHA256SUMS.txt \
+            --target "$GITHUB_SHA" --title "LumenShot $tag" --notes-file notes.md "${flags[@]}"
