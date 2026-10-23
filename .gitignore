@@ -1,0 +1,17 @@
+build/
+*.exe
+*.zip
+SHA256SUMS.txt
+LumenShot.ini
+Screenshots/
+
+# Local credentials, signing keys, and agent configuration.
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+*.p12
+.codex/
+.agents/
+.aws/

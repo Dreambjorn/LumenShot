@@ -1,0 +1,16 @@
+# Generate the embedded notices from the original files to keep every release in sync.
+file(GLOB license_texts CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/licenses/*")
+list(SORT license_texts)
+set(notice_sources "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+    "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md" ${license_texts})
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${notice_sources})
+set(notices "LumenShot - Licenses and acknowledgements\n\n")
+foreach(path IN LISTS notice_sources)
+    file(RELATIVE_PATH name "${CMAKE_CURRENT_SOURCE_DIR}" "${path}")
+    file(READ "${path}" text)
+    string(APPEND notices "================ ${name} ================\n\n${text}\n\n")
+endforeach()
+set(HDRSHOT_NOTICES_FILE "${CMAKE_CURRENT_BINARY_DIR}/embedded-notices.txt")
+file(CONFIGURE OUTPUT "${HDRSHOT_NOTICES_FILE}" CONTENT "${notices}" @ONLY NEWLINE_STYLE UNIX)
+set(HDRSHOT_NOTICES_RC "${CMAKE_CURRENT_BINARY_DIR}/notices.rc")
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/notices.rc.in" "${HDRSHOT_NOTICES_RC}" @ONLY)

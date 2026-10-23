@@ -1,0 +1,20 @@
+# Each run owns its output files and settings beside a private test executable.
+string(RANDOM LENGTH 12 ALPHABET 0123456789abcdef suffix)
+set(directory "${EVIDENCE_ROOT}/${NAME}-${suffix}")
+if(EXISTS "${directory}")
+    message(FATAL_ERROR "Refusing to reuse an existing test directory.")
+endif()
+file(MAKE_DIRECTORY "${directory}" "${directory}/temporary")
+file(COPY "${EXECUTABLE}" DESTINATION "${directory}")
+get_filename_component(filename "${EXECUTABLE}" NAME)
+string(REPLACE "${EVIDENCE_ROOT}" "${directory}" arguments "${ARGUMENTS}")
+set(ENV{TEMP} "${directory}/temporary")
+set(ENV{TMP} "${directory}/temporary")
+execute_process(COMMAND "${directory}/${filename}" ${arguments}
+    WORKING_DIRECTORY "${directory}" RESULT_VARIABLE result
+    OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 60)
+file(WRITE "${directory}/output.log" "${output}${errors}")
+message("${output}${errors}")
+if(NOT result STREQUAL "0")
+    message(FATAL_ERROR "${NAME} failed: ${result}. Evidence: ${directory}")
+endif()
