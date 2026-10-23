@@ -274,34 +274,69 @@ inline bool request_borderless_capture() noexcept {
     return allowed;
 }
 
-// Runs at startup so the first screenshot skips device and permission setup.
-inline void warm_capture() {
-    Runtime runtime;
-    for (const auto& monitor : monitors()) shared_device(monitor.adapter.Get());
-    half_lookup();
-    srgb_lookup();
-    request_borderless_capture();
-}
-
-inline Frame capture_wgc(const Monitor& monitor, HWND own_test_window = nullptr) {
-    Runtime runtime;
-    const auto shared = shared_device(monitor.adapter.Get());
-    std::lock_guard<std::mutex> guard(shared->use);
-    Device& device = *shared;
-    ComPtr<IDXGIDevice> dxgi;
-    check(device.device.As(&dxgi), "Cannot access capture device");
-    ComPtr<IInspectable> inspectable;
-    check(CreateDirect3D11DeviceFromDXGIDevice(dxgi.Get(), &inspectable), "Cannot wrap capture device");
-    ComPtr<Direct3DAbi::IDirect3DDevice> runtime_device;
-    check(inspectable.As(&runtime_device), "Cannot create runtime capture device");
+inline ComPtr<IGraphicsCaptureItemInterop> capture_item_factory() {
     HString item_class(L"Windows.Graphics.Capture.GraphicsCaptureItem");
     ComPtr<IGraphicsCaptureItemInterop> interop;
     check(RoGetActivationFactory(item_class.get(), IID_PPV_ARGS(&interop)), "Windows capture is unavailable");
+    return interop;
+}
+
+struct CaptureItems {
+    std::mutex lock;
+    std::map<HMONITOR, std::pair<RECT, ComPtr<CaptureAbi::IGraphicsCaptureItem>>> items;
+};
+
+// Creating an item costs about 30 ms, so items are kept until the display layout changes.
+inline CaptureItems& capture_items() {
+    // Never destroyed: releasing runtime objects during process exit is unsafe.
+    static CaptureItems* items = [] {
+        // Items outlive the worker that created them, so the apartment must too.
+        CO_MTA_USAGE_COOKIE cookie{};
+        CoIncrementMTAUsage(&cookie);
+        return new CaptureItems;
+    }();
+    return *items;
+}
+
+inline void forget_capture_items() {
+    auto& cache = capture_items();
+    std::lock_guard<std::mutex> guard(cache.lock);
+    cache.items.clear();
+}
+
+inline ComPtr<CaptureAbi::IGraphicsCaptureItem> capture_item(IGraphicsCaptureItemInterop* interop,
+                                                            const Monitor& monitor, bool& cached) {
+    auto& cache = capture_items();
+    {
+        std::lock_guard<std::mutex> guard(cache.lock);
+        const auto found = cache.items.find(monitor.handle);
+        cached = found != cache.items.end() && EqualRect(&found->second.first, &monitor.bounds);
+        if (cached) return found->second.second;
+    }
     ComPtr<CaptureAbi::IGraphicsCaptureItem> item;
-    if (own_test_window)
-        check(interop->CreateForWindow(own_test_window, IID_PPV_ARGS(&item)), "Cannot select test window");
-    else
-        check(interop->CreateForMonitor(monitor.handle, IID_PPV_ARGS(&item)), "Cannot select capture monitor");
+    check(interop->CreateForMonitor(monitor.handle, IID_PPV_ARGS(&item)), "Cannot select capture monitor");
+    std::lock_guard<std::mutex> guard(cache.lock);
+    cache.items[monitor.handle] = {monitor.bounds, item};
+    return item;
+}
+
+// Runs at startup so the first screenshot skips device, permission and item setup.
+inline void warm_capture() {
+    Runtime runtime;
+    const auto displays = monitors();
+    for (const auto& monitor : displays) shared_device(monitor.adapter.Get());
+    half_lookup();
+    srgb_lookup();
+    request_borderless_capture();
+    const auto interop = capture_item_factory();
+    bool cached = false;
+    for (const auto& monitor : displays) capture_item(interop.Get(), monitor, cached);
+}
+
+struct CaptureTimeout : std::runtime_error { using std::runtime_error::runtime_error; };
+
+inline Frame capture_item_frame(Device& device, Direct3DAbi::IDirect3DDevice* runtime_device,
+                                CaptureAbi::IGraphicsCaptureItem* item, const Monitor& monitor) {
     ABI::Windows::Graphics::SizeInt32 size{};
     check(item->get_Size(&size), "Cannot read capture dimensions");
     if (size.Width <= 0 || size.Height <= 0) throw std::runtime_error("Capture target has no visible size.");
@@ -311,9 +346,9 @@ inline Frame capture_wgc(const Monitor& monitor, HWND own_test_window = nullptr)
     CaptureLifetime lifetime;
     const auto format = static_cast<DirectXAbi::DirectXPixelFormat>(
         monitor.hdr ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM);
-    check(pool_factory->CreateFreeThreaded(runtime_device.Get(), format, 2, size, &lifetime.pool),
+    check(pool_factory->CreateFreeThreaded(runtime_device, format, 2, size, &lifetime.pool),
           "Cannot initialize capture frame pool");
-    check(lifetime.pool->CreateCaptureSession(item.Get(), &lifetime.session), "Cannot initialize capture session");
+    check(lifetime.pool->CreateCaptureSession(item, &lifetime.session), "Cannot initialize capture session");
     ComPtr<CaptureAbi::IGraphicsCaptureSession2> cursor_control;
     if (SUCCEEDED(lifetime.session.As(&cursor_control)))
         check(cursor_control->put_IsCursorCaptureEnabled(false), "Cannot disable cursor capture");
@@ -328,7 +363,7 @@ inline Frame capture_wgc(const Monitor& monitor, HWND own_test_window = nullptr)
         if (frame) break;
         Sleep(10);
     }
-    if (!frame) throw std::runtime_error("Capture timed out. The game or Windows may exclude this content.");
+    if (!frame) throw CaptureTimeout("Capture timed out. The game or Windows may exclude this content.");
     ABI::Windows::Graphics::SizeInt32 content{};
     check(frame->get_ContentSize(&content), "Cannot read frame dimensions");
     if (content.Width != size.Width || content.Height != size.Height)
@@ -344,6 +379,34 @@ inline Frame capture_wgc(const Monitor& monitor, HWND own_test_window = nullptr)
                                 L"Windows Graphics Capture", unsigned(content.Width), unsigned(content.Height));
     close_runtime_object(frame.Get());
     return result;
+}
+
+inline Frame capture_wgc(const Monitor& monitor, HWND own_test_window = nullptr) {
+    Runtime runtime;
+    const auto shared = shared_device(monitor.adapter.Get());
+    std::lock_guard<std::mutex> guard(shared->use);
+    ComPtr<IDXGIDevice> dxgi;
+    check(shared->device.As(&dxgi), "Cannot access capture device");
+    ComPtr<IInspectable> inspectable;
+    check(CreateDirect3D11DeviceFromDXGIDevice(dxgi.Get(), &inspectable), "Cannot wrap capture device");
+    ComPtr<Direct3DAbi::IDirect3DDevice> runtime_device;
+    check(inspectable.As(&runtime_device), "Cannot create runtime capture device");
+    const auto interop = capture_item_factory();
+    if (own_test_window) {
+        ComPtr<CaptureAbi::IGraphicsCaptureItem> item;
+        check(interop->CreateForWindow(own_test_window, IID_PPV_ARGS(&item)), "Cannot select test window");
+        return capture_item_frame(*shared, runtime_device.Get(), item.Get(), monitor);
+    }
+    bool cached = false;
+    const auto item = capture_item(interop.Get(), monitor, cached);
+    try { return capture_item_frame(*shared, runtime_device.Get(), item.Get(), monitor); }
+    catch (const CaptureTimeout&) { throw; }
+    catch (const std::exception&) {
+        // A cached item can outlive its monitor; retry once with a fresh one.
+        if (!cached) throw;
+        forget_capture_items();
+        return capture_item_frame(*shared, runtime_device.Get(), capture_item(interop.Get(), monitor, cached).Get(), monitor);
+    }
 }
 
 inline Frame capture_dxgi(const Monitor& monitor) {

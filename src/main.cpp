@@ -664,6 +664,7 @@ LRESULT CALLBACK window_proc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
             if(wp==cancel_hotkey_id) app->cancel_capture();
             return 0;
         case WM_KEYDOWN: if(wp==VK_ESCAPE) {app->cancel_capture();return 0;}break;
+        case WM_DISPLAYCHANGE: forget_capture_items();break;
         case done_message: app->finish_work();return 0;
         case tray_message:
             if (lp==WM_RBUTTONUP) app->tray_menu();
