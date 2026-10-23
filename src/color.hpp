@@ -252,82 +252,77 @@ inline std::uint16_t float_to_half(float value) {
     return sign | std::uint16_t(exponent << 10) | std::uint16_t(fraction >> 13);
 }
 
-inline Image render_sdr(const Frame& frame, const ColorSettings& settings, bool use_lookup=true) {
-    const auto count = checked_pixels(frame.width, frame.height);
-    if (frame.pixels.size() != count) throw std::runtime_error("Incomplete capture frame.");
-    if (!std::isfinite(settings.paper_white) || settings.paper_white < 40
-        || settings.paper_white > 2000 || !std::isfinite(settings.exposure)
-        || settings.exposure < -4 || settings.exposure > 4)
-        throw std::runtime_error("Color settings are out of range.");
-    if (!frame.regions.empty()) {
-        Image image;
-        image.width = frame.width; image.height = frame.height;
-        image.bgra.assign(count * 4, 0);
-        for (std::size_t i = 3; i < image.bgra.size(); i += 4) image.bgra[i] = 255;
-        image.description = L"Per-monitor HDR/SDR conversion";
-        bool first = true;
-        for (const auto& region : frame.regions) {
-            if (!region.width || !region.height || region.x > frame.width || region.y > frame.height
-                || region.width > frame.width - region.x || region.height > frame.height - region.y)
-                throw std::runtime_error("Monitor region is outside the captured image.");
-            Frame tile;
-            tile.width = region.width; tile.height = region.height;
-            tile.hdr = region.hdr; tile.sdr_white = region.sdr_white;
-            tile.pixels.resize(checked_pixels(tile.width, tile.height));
-            for (unsigned y = 0; y < tile.height; ++y)
-                std::copy_n(frame.pixels.begin() + std::size_t(region.y + y) * frame.width + region.x,
-                            tile.width, tile.pixels.begin() + std::size_t(y) * tile.width);
-            // Each display has its own SDR white and HDR classification.
-            const auto converted = render_sdr(tile, settings, use_lookup);
-            for (unsigned y = 0; y < tile.height; ++y)
-                std::memcpy(image.bgra.data() + (std::size_t(region.y + y) * frame.width + region.x) * 4,
-                            converted.bgra.data() + std::size_t(y) * tile.width * 4, std::size_t(tile.width) * 4);
-            image.tone_mapped = image.tone_mapped || converted.tone_mapped;
-            image.source_peak = std::max(image.source_peak, converted.source_peak);
-            image.reference_white = first ? converted.reference_white
-                : image.reference_white == converted.reference_white ? image.reference_white : 0;
-            first = false;
+// Splits rows across up to four workers; the body runs on pool threads and must not throw.
+template<class Body> void parallel_rows(unsigned height, const Body& body) {
+    const unsigned workers = height < 64 ? 1
+        : std::min(4u, std::max(1u, unsigned(GetActiveProcessorCount(ALL_PROCESSOR_GROUPS))));
+    std::array<NativeWork, 3> jobs;
+    for (unsigned i = 1; i < workers; ++i)
+        jobs[i-1].start([&,i] { body(i, height*i/workers, height*(i+1)/workers); });
+    body(0u, 0u, height/workers);
+    for (auto& job : jobs) job.join();
+}
+
+struct RenderedRegion {
+    bool tone_mapped = false;
+    double source_peak = 0, reference_white = 80;
+    std::wstring description;
+};
+
+// Converts one display's area of the frame in place, so monitors need no tile copies.
+inline RenderedRegion render_region(const Frame& frame, const FrameRegion& region, const ColorSettings& settings,
+                                    bool use_lookup, Image& image) {
+    const std::size_t count = std::size_t(region.width) * region.height;
+    const auto offset = [&](unsigned x, unsigned y) {
+        return std::size_t(region.y + y) * frame.width + region.x + x;
+    };
+    struct Stats { double component_peak = 0, luminance_peak = 0; bool wide_gamut = false, invalid = false; };
+    std::array<Stats, 4> partial{};
+    parallel_rows(region.height, [&](unsigned worker, unsigned first, unsigned last) {
+        Stats& stats = partial[worker];
+        for (unsigned y = first; y < last; ++y) for (unsigned x = 0; x < region.width; ++x) {
+            const Pixel& p = frame.pixels[offset(x, y)];
+            if (!std::isfinite(p.r) || !std::isfinite(p.g) || !std::isfinite(p.b)) { stats.invalid = true; return; }
+            stats.component_peak = std::max(stats.component_peak, double(std::max({p.r, p.g, p.b})));
+            stats.luminance_peak = std::max(stats.luminance_peak, luminance({p.r, p.g, p.b}));
+            stats.wide_gamut = stats.wide_gamut || std::min({p.r,p.g,p.b}) < -0.0001f;
         }
-        return image;
-    }
+    });
     double component_peak = 0, luminance_peak = 0;
     bool wide_gamut = false;
-    for (const Pixel& p : frame.pixels) {
-        if (!std::isfinite(p.r) || !std::isfinite(p.g) || !std::isfinite(p.b))
-            throw std::runtime_error("Capture contains invalid floating-point colors.");
-        component_peak = std::max(component_peak, double(std::max({p.r, p.g, p.b})));
-        luminance_peak = std::max(luminance_peak, luminance({p.r, p.g, p.b}));
-        wide_gamut = wide_gamut || std::min({p.r,p.g,p.b}) < -0.0001f;
+    for (const auto& stats : partial) {
+        if (stats.invalid) throw std::runtime_error("Capture contains invalid floating-point colors.");
+        component_peak = std::max(component_peak, stats.component_peak);
+        luminance_peak = std::max(luminance_peak, stats.luminance_peak);
+        wide_gamut = wide_gamut || stats.wide_gamut;
     }
-    Image image;
-    image.width = frame.width; image.height = frame.height;
-    image.bgra.resize(count * 4);
-    image.source_peak = luminance_peak * 80;
-    const bool embedded_sdr = frame.hdr && settings.mode == ContentMode::Auto
-        && !wide_gamut && component_peak * 80 <= frame.sdr_white * 1.01;
-    const bool sdr = !frame.hdr || settings.mode == ContentMode::Sdr || embedded_sdr;
-    const double white = !frame.hdr ? 80 : (sdr ? frame.sdr_white : settings.paper_white);
+    RenderedRegion result;
+    result.source_peak = luminance_peak * 80;
+    const bool embedded_sdr = region.hdr && settings.mode == ContentMode::Auto
+        && !wide_gamut && component_peak * 80 <= region.sdr_white * 1.01;
+    const bool sdr = !region.hdr || settings.mode == ContentMode::Sdr || embedded_sdr;
+    const double white = !region.hdr ? 80 : (sdr ? region.sdr_white : settings.paper_white);
     if (!std::isfinite(white) || white <= 0) throw std::runtime_error("Invalid reference white.");
-    image.reference_white = white;
+    result.reference_white = white;
     const double gain = 80 / white * (sdr ? 1 : std::exp2(settings.exposure));
     const double peak = std::max(1.0, luminance_peak * gain);
-    image.tone_mapped = !sdr && peak > 1.000001;
-    image.description = !frame.hdr ? L"SDR preserved"
+    result.tone_mapped = !sdr && peak > 1.000001;
+    result.description = !region.hdr ? L"SDR preserved"
         : sdr ? L"SDR normalization" : L"HDR to SDR";
-    if(frame.hdr && settings.mode==ContentMode::Auto) image.description+=L" (automatic estimate)";
+    if(region.hdr && settings.mode==ContentMode::Auto) result.description+=L" (automatic estimate)";
     const ToneCurve curve(peak);
     const RenderLookup lookup(curve,peak,use_lookup && count>=65536,!sdr);
     static constexpr int bayer[16] = {0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5};
     // SDR captures hold exact 8-bit decodes, so their codes come from a table built with the same math.
     std::array<std::uint8_t, 256> codes{};
-    if (!frame.hdr)
+    if (!region.hdr)
         for (unsigned i = 0; i < 256; ++i)
             codes[i] = std::uint8_t(std::clamp(std::lround(lookup.encode(std::clamp(double(srgb_lookup()[i]), 0.0, 1.0)) * 255), 0l, 255l));
-    auto rows = [&](unsigned first, unsigned last) {
-        for (unsigned y = first; y < last; ++y) for (unsigned x = 0; x < frame.width; ++x) {
-            const std::size_t index = std::size_t(y) * frame.width + x;
+    parallel_rows(region.height, [&](unsigned, unsigned first, unsigned last) {
+        for (unsigned y = first; y < last; ++y) for (unsigned x = 0; x < region.width; ++x) {
+            const std::size_t index = offset(x, y);
             const Pixel& p = frame.pixels[index];
-            if (!frame.hdr) {
+            if (!region.hdr) {
                 const int r = srgb_code(p.r), g = srgb_code(p.g), b = srgb_code(p.b);
                 if (r >= 0 && g >= 0 && b >= 0) {
                     image.bgra[index*4] = codes[b]; image.bgra[index*4+1] = codes[g];
@@ -353,14 +348,43 @@ inline Image render_sdr(const Frame& frame, const ColorSettings& settings, bool 
             image.bgra[index*4+2] = quantize(color.r);
             image.bgra[index*4+3] = 255;
         }
-    };
-    const unsigned workers = frame.height < 64 ? 1
-        : std::min(4u, std::max(1u, unsigned(GetActiveProcessorCount(ALL_PROCESSOR_GROUPS))));
-    std::array<NativeWork, 3> jobs;
-    for (unsigned i = 1; i < workers; ++i)
-        jobs[i-1].start([&,i] { rows(frame.height*i/workers, frame.height*(i+1)/workers); });
-    rows(0, frame.height/workers);
-    for (auto& job : jobs) job.join();
+    });
+    return result;
+}
+
+inline Image render_sdr(const Frame& frame, const ColorSettings& settings, bool use_lookup=true) {
+    const auto count = checked_pixels(frame.width, frame.height);
+    if (frame.pixels.size() != count) throw std::runtime_error("Incomplete capture frame.");
+    if (!std::isfinite(settings.paper_white) || settings.paper_white < 40
+        || settings.paper_white > 2000 || !std::isfinite(settings.exposure)
+        || settings.exposure < -4 || settings.exposure > 4)
+        throw std::runtime_error("Color settings are out of range.");
+    Image image;
+    image.width = frame.width; image.height = frame.height;
+    if (frame.regions.empty()) {
+        image.bgra.resize(count * 4);
+        const auto converted = render_region(frame, {0,0,frame.width,frame.height,frame.hdr,frame.sdr_white},
+                                             settings, use_lookup, image);
+        image.tone_mapped = converted.tone_mapped; image.source_peak = converted.source_peak;
+        image.reference_white = converted.reference_white; image.description = converted.description;
+        return image;
+    }
+    image.bgra.assign(count * 4, 0);
+    for (std::size_t i = 3; i < image.bgra.size(); i += 4) image.bgra[i] = 255;
+    image.description = L"Per-monitor HDR/SDR conversion";
+    bool first = true;
+    for (const auto& region : frame.regions) {
+        if (!region.width || !region.height || region.x > frame.width || region.y > frame.height
+            || region.width > frame.width - region.x || region.height > frame.height - region.y)
+            throw std::runtime_error("Monitor region is outside the captured image.");
+        // Each display has its own SDR white and HDR classification.
+        const auto converted = render_region(frame, region, settings, use_lookup, image);
+        image.tone_mapped = image.tone_mapped || converted.tone_mapped;
+        image.source_peak = std::max(image.source_peak, converted.source_peak);
+        image.reference_white = first ? converted.reference_white
+            : image.reference_white == converted.reference_white ? image.reference_white : 0;
+        first = false;
+    }
     return image;
 }
 
