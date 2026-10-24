@@ -45,3 +45,6 @@ add_executable(hdr_peak_benchmark EXCLUDE_FROM_ALL image/hdr_peak_benchmark.cpp)
 target_link_libraries(hdr_peak_benchmark PRIVATE lumenshot_core)
 hdrshot_target(hdr_peak_benchmark)
 target_link_options(hdr_peak_benchmark PRIVATE -municode)
+
+add_executable(dxgi_probe EXCLUDE_FROM_ALL capture/dxgi_probe.cpp)
+hdrshot_target(dxgi_probe)

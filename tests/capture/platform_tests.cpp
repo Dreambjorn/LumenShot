@@ -2,7 +2,6 @@
 #include "image/image_io.hpp"
 #include <iostream>
 #include <atomic>
-#include <thread>
 #include <d3d11_1.h>
 
 using namespace hdrshot;
@@ -159,19 +158,33 @@ int wmain(int argc,wchar_t** argv) try {
         return swapchain->Present(1,0);
     };
     check(draw_fixture(),"Cannot present synthetic fixture");
-    std::atomic<bool> repainting{true};
-    std::thread repaint([&] {while(repainting.load()){draw_fixture();Sleep(5);}});
-    Frame desktop;
-    try { desktop=capture_dxgi(monitor); }
+    std::atomic<bool> captured{false};
+    Frame desktop;std::exception_ptr capture_error;
+    NativeWork capture_work;
+    capture_work.start([&] {
+        try {desktop=capture_dxgi(monitor);} catch(...) {capture_error=std::current_exception();}
+        captured=true;
+    });
+    unsigned presentations=0;HRESULT presentation=S_OK;
+    // Present can wait on the window thread, so keep its message pump running.
+    while(!captured.load()) {
+        MSG message{};
+        while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)) {TranslateMessage(&message);DispatchMessageW(&message);}
+        const HRESULT result=draw_fixture();
+        if(result==S_OK) ++presentations;else presentation=result;
+        Sleep(5);
+    }
+    capture_work.join();
+    check(presentation,"Synthetic presentation failed during DXGI capture");
+    require(presentation==S_OK,"Synthetic presentation was occluded during DXGI capture");
+    std::cout<<presentations<<" synthetic presentations completed during DXGI capture.\n";
+    try {if(capture_error) std::rethrow_exception(capture_error);}
     catch (const PlatformError& error) {
-        repainting=false;repaint.join();
         if(error.code!=DXGI_ERROR_WAIT_TIMEOUT) throw;
         std::cout << checks << " platform checks passed: WGC, JPEG XR, PNG metadata.\n"
                   << "CAPABILITY SKIP: Desktop Duplication returned DXGI_ERROR_WAIT_TIMEOUT after synthetic updates; no compatibility claim.\n";
         return 0;
     }
-    catch (...) { repainting=false;repaint.join();throw; }
-    repainting=false;repaint.join();
     const Image desktop_image=render_sdr(desktop,sdr_settings);
     for (int i=0;i<5;++i) verify_patch(desktop_image,unsigned(left-monitor.bounds.left+50+i*100),
                                                       unsigned(top-monitor.bounds.top+100),i);
