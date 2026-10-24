@@ -187,14 +187,14 @@ inline Frame read_texture(Device& device, ID3D11Texture2D* texture, bool hdr,
     const bool bgra = desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM
                    || desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
     if (!fp16 && !bgra) throw std::runtime_error("Capture returned an unsupported color representation.");
-    if (hdr && !fp16) throw std::runtime_error("HDR capture returned 8-bit pixels. Select Windows Graphics Capture.");
+    if (hdr && !fp16) throw std::runtime_error("HDR capture returned 8-bit pixels. Select WGC.");
     Frame frame;
     frame.width = crop_width ? std::min(crop_width, desc.Width) : desc.Width;
     frame.height = crop_height ? std::min(crop_height, desc.Height) : desc.Height;
     frame.hdr = hdr; frame.sdr_white = sdr_white; frame.backend = backend;
     if(active_diagnostics) active_diagnostics->frame({frame.width,frame.height,hdr,sdr_white,unsigned(desc.Format),
-        backend==L"Windows Graphics Capture"?DiagnosticBackend::Windows:
-        backend==L"Desktop Duplication"?DiagnosticBackend::Desktop:DiagnosticBackend::Unknown});
+        backend==L"WGC"?DiagnosticBackend::Windows:
+        backend==L"DXGI"?DiagnosticBackend::Desktop:DiagnosticBackend::Unknown});
     if (sdr) *sdr = {};
     if (!bgra || hdr) sdr = nullptr;
     if (sdr) {
@@ -400,7 +400,7 @@ inline Frame capture_item_frame(Device& device, Direct3DAbi::IDirect3DDevice* ru
     ComPtr<ID3D11Texture2D> texture;
     check(access->GetInterface(IID_PPV_ARGS(&texture)), "Cannot access captured texture");
     Frame result = read_texture(device, texture.Get(), monitor.hdr, monitor.sdr_white,
-                                L"Windows Graphics Capture", unsigned(content.Width), unsigned(content.Height), sdr);
+                                L"WGC", unsigned(content.Width), unsigned(content.Height), sdr);
     close_runtime_object(frame.Get());
     return result;
 }
@@ -440,15 +440,15 @@ inline Frame capture_dxgi(const Monitor& monitor, Image* sdr = nullptr) {
     Device& device = *shared;
     DiagnosticTimer session(DiagnosticStage::Session);
     ComPtr<IDXGIOutput5> output;
-    check(monitor.output.As(&output), "HDR-capable Desktop Duplication is unavailable");
+    check(monitor.output.As(&output), "HDR-capable DXGI capture is unavailable");
     constexpr DXGI_FORMAT formats[] = {DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_B8G8R8A8_UNORM};
     ComPtr<IDXGIOutputDuplication> duplication;
     check(output->DuplicateOutput1(device.device.Get(), 0, 2, formats, &duplication),
-          "Cannot start Desktop Duplication");
+          "Cannot start DXGI capture");
     DXGI_OUTDUPL_DESC desc{};
     duplication->GetDesc(&desc);
     if (desc.Rotation != DXGI_MODE_ROTATION_IDENTITY && desc.Rotation != DXGI_MODE_ROTATION_UNSPECIFIED)
-        throw std::runtime_error("Use Windows Graphics Capture for a rotated monitor.");
+        throw std::runtime_error("Use WGC for a rotated monitor.");
     session.stop();
     DiagnosticTimer fresh(DiagnosticStage::FreshFrame);
     DXGI_OUTDUPL_FRAME_INFO info{};
@@ -473,7 +473,7 @@ inline Frame capture_dxgi(const Monitor& monitor, Image* sdr = nullptr) {
         throw std::runtime_error("Windows excluded protected content from this screenshot.");
     ComPtr<ID3D11Texture2D> texture;
     check(resource.As(&texture), "Cannot access duplicated texture");
-    return read_texture(device, texture.Get(), monitor.hdr, monitor.sdr_white, L"Desktop Duplication", 0, 0, sdr);
+    return read_texture(device, texture.Get(), monitor.hdr, monitor.sdr_white, L"DXGI", 0, 0, sdr);
 }
 
 // When every monitor is SDR, sdr holds the exact preview and the frame carries no float pixels.
@@ -534,8 +534,8 @@ inline Frame capture(const Monitor& monitor, CaptureBackend backend, Image* sdr 
         diagnostic_count(DiagnosticCounter::BackendFallback);
         try { return capture_dxgi(monitor, sdr); }
         catch (const std::exception& dxgi_error) {
-            throw std::runtime_error(std::string("Windows capture: ") + wgc_error.what()
-                + "\nDesktop capture: " + dxgi_error.what());
+            throw std::runtime_error(std::string("WGC: ") + wgc_error.what()
+                + "\nDXGI: " + dxgi_error.what());
         }
     }
 }

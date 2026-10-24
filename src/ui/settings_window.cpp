@@ -79,7 +79,7 @@ void App::create_controls() {
     monitor_names.push_back(L"All monitors");
     if(settings.monitor==L"*") selected=int(displays.size())+1;
     add_combo(MonitorChoice,monitor_names,selected,left,194,column_width);
-    add_combo(BackendChoice,{L"Automatic (Windows, then desktop)",L"Windows Graphics Capture",L"Desktop Duplication"},int(settings.backend),right,194,column_width);
+    add_combo(BackendChoice,{L"Automatic (WGC, then DXGI)",L"WGC",L"DXGI"},int(settings.backend),right,194,column_width);
     label(L"Screenshot shortcut",left,236,column_width);
     const struct {int id;const wchar_t* text;UINT modifier;int x;} modifiers[]={
         {ModifierCtrl,L"Ctrl",MOD_CONTROL,left},{ModifierShift,L"Shift",MOD_SHIFT,left+108},{ModifierAlt,L"Alt",MOD_ALT,left+216}};
