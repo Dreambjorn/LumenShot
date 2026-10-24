@@ -1,6 +1,7 @@
 #pragma once
 #include "platform/platform.hpp"
 #include "image/color.hpp"
+#include "image/output_validation.hpp"
 #include <wincodec.h>
 #include <fstream>
 
@@ -69,6 +70,7 @@ inline void save_image(const std::filesystem::path& path, const Image& image) {
     check(frame->Commit(), "Cannot finish PNG frame");
     check(encoder->Commit(), "Cannot finish PNG file");
     metadata.Reset(); frame.Reset(); properties.Reset(); encoder.Reset(); stream.Reset();
+    validate_wic_output(factory.Get(),transaction.path(),WicOutput::SrgbPng,image.width,image.height,image.bgra.data());
     transaction.commit();
 }
 
@@ -108,6 +110,16 @@ inline void save_master(const std::filesystem::path& path, const Frame& source) 
     check(frame->Commit(), "Cannot finish HDR frame");
     check(encoder->Commit(), "Cannot finish HDR original");
     frame.Reset(); properties.Reset(); encoder.Reset(); stream.Reset();
+    validate_wic_output(factory.Get(),transaction.path(),WicOutput::ScRgbJpegXr,source.width,source.height,
+                        reinterpret_cast<const BYTE*>(pixels.data()));
+    transaction.commit();
+}
+
+inline void copy_master(const std::filesystem::path& source,const std::filesystem::path& destination,unsigned width,unsigned height) {
+    OutputTransaction transaction(destination);
+    std::filesystem::copy_file(source,transaction.path(),std::filesystem::copy_options::overwrite_existing);
+    auto factory=imaging_factory();
+    validate_wic_output(factory.Get(),transaction.path(),WicOutput::ImportedScRgbJpegXr,width,height);
     transaction.commit();
 }
 

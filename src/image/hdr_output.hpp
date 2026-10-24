@@ -17,6 +17,53 @@ inline void check_hdr_codec(uhdr_error_info_t result,const char* context) {
     if(result.error_code!=UHDR_CODEC_OK)
         throw std::runtime_error(std::string(context)+(result.has_detail?": "+std::string(result.detail):"."));
 }
+inline void validate_hdr_jpeg(const std::filesystem::path& path,unsigned width,unsigned height,double peak=0) {
+    DiagnosticTimer timing(DiagnosticStage::Validate);
+    checked_pixels(width,height);
+    std::ifstream input(path,std::ios::binary|std::ios::ate);
+    const auto size=input.tellg();
+    if(!input || size<4 || std::uintmax_t(size)>std::uintmax_t(std::numeric_limits<int>::max()))
+        throw std::runtime_error("HDR JPEG output is empty or unsupported.");
+    std::string bytes(std::size_t(size),'\0');input.seekg(0);input.read(bytes.data(),std::streamsize(bytes.size()));
+    if(!input || std::uint8_t(bytes[0])!=0xff || std::uint8_t(bytes[1])!=0xd8
+       || std::uint8_t(bytes[bytes.size()-2])!=0xff || std::uint8_t(bytes.back())!=0xd9)
+        throw std::runtime_error("HDR JPEG output is incomplete.");
+    uhdr_codec_private_t* decoder=uhdr_create_decoder();
+    if(!decoder) throw std::runtime_error("Cannot create HDR output verifier.");
+    struct Release {uhdr_codec_private_t* value;~Release(){uhdr_release_decoder(value);}} release{decoder};
+    uhdr_compressed_image_t image{};image.data=bytes.data();image.data_sz=image.capacity=bytes.size();
+    image.cg=UHDR_CG_UNSPECIFIED;image.ct=UHDR_CT_UNSPECIFIED;image.range=UHDR_CR_UNSPECIFIED;
+    check_hdr_codec(uhdr_dec_set_image(decoder,&image),"Cannot reopen HDR JPEG output");
+    check_hdr_codec(uhdr_dec_probe(decoder),"Cannot inspect HDR JPEG output");
+    if(uhdr_dec_get_image_width(decoder)!=int(width) || uhdr_dec_get_image_height(decoder)!=int(height)
+       || uhdr_dec_get_gainmap_width(decoder)!=int(width) || uhdr_dec_get_gainmap_height(decoder)!=int(height))
+        throw std::runtime_error("HDR JPEG output changed base or gain map dimensions.");
+    const auto complete=[](const uhdr_mem_block_t* block) {
+        if(!block || !block->data || block->data_sz<4) return false;
+        const auto* data=static_cast<const std::uint8_t*>(block->data);
+        return data[0]==0xff && data[1]==0xd8 && data[block->data_sz-2]==0xff && data[block->data_sz-1]==0xd9;
+    };
+    const auto* profile=uhdr_dec_get_icc(decoder);
+    if(!complete(uhdr_dec_get_base_image(decoder)) || !complete(uhdr_dec_get_gainmap_image(decoder))
+       || !profile || !profile->data || !profile->data_sz)
+        throw std::runtime_error("HDR JPEG output lost image data or its color profile.");
+    const auto* metadata=uhdr_dec_get_gainmap_metadata(decoder);
+    if(!metadata || !std::isfinite(metadata->hdr_capacity_min) || !std::isfinite(metadata->hdr_capacity_max)
+       || metadata->hdr_capacity_min<1 || metadata->hdr_capacity_max<=metadata->hdr_capacity_min)
+        throw std::runtime_error("HDR JPEG output has invalid display headroom.");
+    for(unsigned channel=0;channel<3;++channel) {
+        if(!std::isfinite(metadata->min_content_boost[channel]) || metadata->min_content_boost[channel]<=0
+           || !std::isfinite(metadata->max_content_boost[channel]) || metadata->max_content_boost[channel]<metadata->min_content_boost[channel]
+           || !std::isfinite(metadata->gamma[channel]) || metadata->gamma[channel]<=0
+           || !std::isfinite(metadata->offset_sdr[channel]) || metadata->offset_sdr[channel]<0
+           || !std::isfinite(metadata->offset_hdr[channel]) || metadata->offset_hdr[channel]<0)
+            throw std::runtime_error("HDR JPEG output has invalid gain map metadata.");
+    }
+    if(peak>0 && std::abs(metadata->hdr_capacity_max-peak/203)>std::max(.001,peak/203*.0001))
+        throw std::runtime_error("HDR JPEG output changed its peak brightness metadata.");
+    if(bytes.find("hdrgm:Version")==std::string::npos || bytes.find("urn:iso:std:iso:ts:21496:-1")==std::string::npos)
+        throw std::runtime_error("HDR JPEG output is missing gain map metadata variants.");
+}
 inline void save_hdr_jpeg(const std::filesystem::path& path,const Frame& source,const Image& base) {
     DiagnosticTimer timing(DiagnosticStage::EncodeUltraHdr);
     const auto count=checked_pixels(source.width,source.height);
@@ -75,6 +122,7 @@ inline void save_hdr_jpeg(const std::filesystem::path& path,const Frame& source,
     output.write(static_cast<const char*>(encoded->data),std::streamsize(encoded->data_sz));
     output.close();
     if(!output) throw std::runtime_error("Cannot write HDR JPEG in the selected folder.");
+    validate_hdr_jpeg(transaction.path(),source.width,source.height,peak);
     transaction.commit();
 }
 

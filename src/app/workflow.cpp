@@ -46,7 +46,7 @@ WorkResult process_output(const Settings& settings,const Frame& frame,const Imag
             const auto destination=originals/(name+(jpeg?L".jpg":L".jxr"));
             if(jpeg) save_hdr_jpeg(destination,frame,hdr_base?*hdr_base:converted);
             else if(imported.empty() || settings.sharpness || settings.scale!=100) save_master(destination,frame);
-            else std::filesystem::copy_file(imported,destination,std::filesystem::copy_options::none);
+            else copy_master(imported,destination,frame.width,frame.height);
             original=destination;
             if(!jpeg && settings.hdr_format==HdrFormat::UltraJpeg)
                 warning=L"HDR JPEG requires at least 8 x 8 pixels. Saved JPEG XR instead.";

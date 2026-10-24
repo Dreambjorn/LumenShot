@@ -19,6 +19,7 @@ hdrshot_test(hdr_golden_tests image/hdr_golden_tests.cpp "${evidence}/hdr_golden
 hdrshot_test(sharpen_tests image/sharpen_tests.cpp "${evidence}/sharpen_tests")
 hdrshot_test(scaling_tests image/scaling_tests.cpp "${evidence}/scaling_tests")
 hdrshot_test(hdr_output_tests image/hdr_output_tests.cpp "${evidence}/hdr_output_tests")
+hdrshot_test(output_integrity_tests image/output_integrity_tests.cpp "${evidence}/output_integrity_tests")
 hdrshot_test(multimonitor_tests capture/multimonitor_tests.cpp "${evidence}/multimonitor_tests")
 set_tests_properties(multimonitor_tests PROPERTIES TIMEOUT 30)
 hdrshot_test(startup_tests platform/startup_tests.cpp "${evidence}/startup_tests")
