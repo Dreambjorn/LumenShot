@@ -58,6 +58,7 @@ int wmain(int argc,wchar_t** argv) try {
     source.pixels.resize(source.width*source.height);
     for(unsigned y=0;y<source.height;++y) for(unsigned x=0;x<source.width;++x)
         source.pixels[y*source.width+x]={float(x)/16,float(y)/16,.125f,1};
+    source.pixels[0]={-0.0f,half_to_float(1),half_to_float(0x8001),1};
     const auto image=render_sdr(source,{ContentMode::Hdr,203,0,false});
     const auto png=directory/L"valid.png",jxr=directory/L"valid.jxr",jpeg=directory/L"valid.jpg";
     auto record=std::make_shared<DiagnosticRecord>(DiagnosticSource::Synthetic);
@@ -68,6 +69,9 @@ int wmain(int argc,wchar_t** argv) try {
     require(record->snapshot().stages[std::size_t(DiagnosticStage::Validate)].calls==3,"An encoder skipped validation");
     require(record->snapshot().stages[std::size_t(DiagnosticStage::Commit)].calls==3,"Valid output was not committed once per format");
     const auto png_bytes=read_file(png),jxr_bytes=read_file(jxr),jpeg_bytes=read_file(jpeg);
+    const auto decoded=load_master(jxr).pixels[0];
+    require(decoded.r==0 && decoded.g==source.pixels[0].g && decoded.b==source.pixels[0].b,
+            "JPEG XR changed signed zero or nonzero subnormal samples");
     rejects([&]{save_image(png,image);},"PNG collision was accepted");
     rejects([&]{save_master(jxr,source);},"JPEG XR collision was accepted");
     rejects([&]{save_hdr_jpeg(jpeg,source,image);},"HDR JPEG collision was accepted");

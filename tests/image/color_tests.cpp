@@ -69,6 +69,14 @@ int main() try {
             "Bright HDR orange was whitened during SDR conversion");
     require(converted_overlay.bgra[4]==255 && converted_overlay.bgra[5]==255
             && converted_overlay.bgra[6]==255,"Neutral HDR highlight gained a color cast");
+    Frame calibrated;calibrated.width=4;calibrated.height=1;calibrated.hdr=true;calibrated.sdr_white=240;
+    calibrated.pixels={{.54f,.54f,.54f,1},overlay.pixels[0],{-1.60546875f,1.2197265625f,13.9765625f,1},
+                       {-.6923828125f,1.32421875f,-.044342041f,1}};
+    ColorSettings limit{ContentMode::Hdr,0,0,false};limit.peak_nits=600;
+    const auto limited=render_sdr(calibrated,limit);
+    require(limited.reference_white==240 && limited.bgra[0]==118,"Configured peak was used as diffuse white or darkened midtones");
+    limit.mode=ContentMode::Auto;
+    require(render_sdr(calibrated,limit).bgra==limited.bgra,"Automatic mode ignored the configured game peak");
     const std::array<std::pair<std::uint16_t,float>,8> halves = {{{0x0000,0},{0x3c00,1},{0x4000,2},
         {0xbc00,-1},{0x0001,0.000000059604644775390625f},{0x7bff,65504},{0x3800,.5f},{0x4900,10}}};
     for (const auto& [bits,value] : halves) {
@@ -130,6 +138,7 @@ int main() try {
             require(!preserved.tone_mapped && preserved.description==L"SDR preserved","Native SDR was classified as an HDR conversion");
             require(render_sdr(native,sample,false).bgra==native_codes,"Exact SDR transfer changed source codes");
         }
+    require(render_sdr(native,limit).bgra==native_codes,"Configured HDR peak changed a native SDR capture");
     for(double white:{80.0,160.0,203.0,320.0,480.0}) {
         Frame embedded=native;embedded.hdr=true;embedded.sdr_white=white;
         for(auto& pixel:embedded.pixels) {

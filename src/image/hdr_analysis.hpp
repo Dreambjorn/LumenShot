@@ -9,10 +9,10 @@
 namespace hdrshot {
 
 enum class PeakMethod { Observed, Robust };
-enum class PeakReason { Observed, Percentile, NoHeadroom, SmallSample, SparseBackground, DarkSparse, HighlightDetail, ColorHighlight, Sdr, Empty };
+enum class PeakReason { Observed, Percentile, NoHeadroom, SmallSample, SparseBackground, DarkSparse, HighlightDetail, ColorHighlight, Sdr, Empty, Configured };
 inline const char* peak_reason_name(PeakReason reason) {
     static constexpr const char* names[]={"observed_max","percentile","no_hdr_headroom","small_sample",
-        "sparse_background","dark_sparse","highlight_detail","chromatic_hdr","sdr_bypass","empty"};
+        "sparse_background","dark_sparse","highlight_detail","chromatic_hdr","sdr_bypass","empty","configured_limit"};
     const auto index=std::size_t(reason);return index<std::size(names)?names[index]:"unknown";
 }
 struct HdrPeakMeasurement {

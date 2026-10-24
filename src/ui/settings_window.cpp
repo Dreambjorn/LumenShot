@@ -93,9 +93,10 @@ void App::create_controls() {
     label(L"Save folder",left,168,column_width);
     control(L"EDIT",settings.folder.c_str(),ES_AUTOHSCROLL|WS_TABSTOP,Folder,left,194,542,field_height);
     control(L"BUTTON",L"Browse...",BS_PUSHBUTTON|WS_TABSTOP,Browse,580,194,106,field_height);
-    label(L"Content",left,236,column_width);label(L"HDR reference white (nits)",right,236,column_width);
+    label(L"Content",left,236,column_width);label(L"Peak nits (0=Auto)",right,236,148);label(L"White nits (0=Auto)",538,236,148);
     add_combo(ContentChoice,{L"Automatic",L"HDR content",L"SDR content on HDR display"},int(settings.color.mode),left,262,column_width);
-    control(L"EDIT",std::to_wstring(int(settings.color.paper_white)).c_str(),ES_NUMBER|WS_TABSTOP,PaperWhite,right,262,column_width,field_height);
+    control(L"EDIT",std::to_wstring(int(settings.color.peak_nits)).c_str(),ES_NUMBER|WS_TABSTOP,PeakNits,right,262,148,field_height);
+    control(L"EDIT",std::to_wstring(int(settings.color.paper_white)).c_str(),ES_NUMBER|WS_TABSTOP,PaperWhite,538,262,148,field_height);
     label(L"HDR exposure (stops)",left,304,170);
     label(L"Image size",210,304,134);
     std::wostringstream exposure_text;exposure_text<<std::fixed<<std::setprecision(2)<<settings.color.exposure;
@@ -183,9 +184,15 @@ void App::read_controls(int changed) {
         return parsed;
     };
     if(!changed || changed==PaperWhite) {
-        const char* message="Reference white must be between 40 and 2000 nits.";
+        const char* message="Reference white must be zero (automatic) or between 40 and 2000 nits.";
         next.color.paper_white=number(PaperWhite,message);
-        if(next.color.paper_white<40 || next.color.paper_white>2000) throw std::runtime_error(message);
+        if((next.color.paper_white!=0 && next.color.paper_white<40) || next.color.paper_white<0 || next.color.paper_white>2000) throw std::runtime_error(message);
+    }
+    if(!changed || changed==PeakNits) {
+        const char* message="HDR peak must be zero (automatic) or between 40 and 10000 nits.";
+        next.color.peak_nits=number(PeakNits,message);
+        if(next.color.peak_nits<0 || next.color.peak_nits>10000
+           || (next.color.peak_nits>0 && next.color.peak_nits<40)) throw std::runtime_error(message);
     }
     if(!changed || changed==Exposure) {
         const char* message="Exposure must be between -4 and +4 stops.";
@@ -249,7 +256,7 @@ void App::queue_edit(int id) {
 bool App::flush_edits() {
     KillTimer(window,settings_timer);
     const UINT edits=pending_edits|invalid_edits;pending_edits=0;std::wstring error;
-    for(int id:{Folder,PaperWhite,Exposure,Sharpness}) {
+    for(int id:{Folder,PaperWhite,PeakNits,Exposure,Sharpness}) {
         const UINT flag=1u<<(id-Folder);
         if(edits&flag) {
             if(apply_setting(id)) invalid_edits&=~flag;
@@ -324,7 +331,7 @@ LRESULT CALLBACK window_proc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
             break;
         case WM_COMMAND:
             switch(LOWORD(wp)) {
-            case Folder: case PaperWhite: case Exposure:
+            case Folder: case PaperWhite: case PeakNits: case Exposure:
                 if(app->controls_ready && HIWORD(wp)==EN_CHANGE) app->queue_edit(LOWORD(wp));
                 if(app->controls_ready && HIWORD(wp)==EN_KILLFOCUS) app->flush_edits();
                 break;

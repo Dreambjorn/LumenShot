@@ -46,6 +46,7 @@ struct ColorSettings {
     bool dither = true;
     PeakMethod peak_method = PeakMethod::Robust;
     bool content_aware = true;
+    double peak_nits = 0;
 };
 
 struct Image {
@@ -293,6 +294,7 @@ inline RenderedRegion render_region(const Frame& frame, const FrameRegion& regio
     const auto offset = [&](unsigned x, unsigned y) {
         return std::size_t(region.y + y) * frame.width + region.x + x;
     };
+    const double hdr_white=settings.paper_white>0?settings.paper_white:region.sdr_white;
     struct Stats {
         double component_peak = 0, luminance_peak = 0, tone_peak = 0, minimum_hdr = std::numeric_limits<double>::infinity();
         std::uint64_t hdr_samples = 0;
@@ -300,7 +302,7 @@ inline RenderedRegion render_region(const Frame& frame, const FrameRegion& regio
     };
     std::array<Stats, 4> partial{};
     const bool details=bool(active_diagnostics);
-    const bool robust=region.hdr && settings.mode!=ContentMode::Sdr && settings.peak_method==PeakMethod::Robust;
+    const bool robust=region.hdr && settings.mode!=ContentMode::Sdr && settings.peak_method==PeakMethod::Robust && settings.peak_nits==0;
     parallel_rows(region.height, [&](unsigned worker, unsigned first, unsigned last) {
         Stats& stats = partial[worker];
         for (unsigned y = first; y < last; ++y) for (unsigned x = 0; x < region.width; ++x) {
@@ -313,7 +315,7 @@ inline RenderedRegion render_region(const Frame& frame, const FrameRegion& regio
                 const double maximum=std::max({0.0,wide.r,wide.g,wide.b});
                 stats.tone_peak = std::max(stats.tone_peak,maximum);
                 const double nits=maximum*80;
-                if((details || robust) && nits>settings.paper_white*1.01) {
+                if((details || robust) && nits>hdr_white*1.01) {
                     ++stats.hdr_samples;
                     if(robust && !stats.color_highlights) {
                         stats.minimum_hdr=std::min(stats.minimum_hdr,nits);
@@ -337,8 +339,8 @@ inline RenderedRegion render_region(const Frame& frame, const FrameRegion& regio
     }
     HdrPeakMeasurement measurement;
     measurement.observed_nits=measurement.effective_nits=tone_peak*80;
-    measurement.reference_white=settings.paper_white;measurement.samples=count;measurement.hdr_samples=hdr_samples;measurement.reason=PeakReason::Observed;
-    if(robust && count<1024) measurement.reason=tone_peak*80<=settings.paper_white?PeakReason::NoHeadroom:PeakReason::SmallSample;
+    measurement.reference_white=hdr_white;measurement.samples=count;measurement.hdr_samples=hdr_samples;measurement.reason=PeakReason::Observed;
+    if(robust && count<1024) measurement.reason=tone_peak*80<=hdr_white?PeakReason::NoHeadroom:PeakReason::SmallSample;
     // Channel clipping can erase tint in isolated color highlights.
     else if(robust && color_highlights) measurement.reason=PeakReason::ColorHighlight;
     else if(robust) {
@@ -349,12 +351,12 @@ inline RenderedRegion render_region(const Frame& frame, const FrameRegion& regio
                 const unsigned start=unsigned((step-(std::size_t(y)*region.width)%step)%step);
                 for(unsigned x=start;x<region.width;x+=step) {
                     const auto& pixel=frame.pixels[offset(x,y)];const auto wide=to_rec2020({pixel.r,pixel.g,pixel.b});
-                    histograms[worker].add(std::max({0.0,wide.r,wide.g,wide.b})*80,settings.paper_white);
+                    histograms[worker].add(std::max({0.0,wide.r,wide.g,wide.b})*80,hdr_white);
                 }
             }
         });
         HdrPeakHistogram combined;for(const auto& histogram:histograms) combined.merge(histogram);
-        combined.include_maximum(tone_peak*80);measurement=combined.measure(settings.paper_white);measurement.sample_step=step;
+        combined.include_maximum(tone_peak*80);measurement=combined.measure(hdr_white);measurement.sample_step=step;
         if((measurement.reason==PeakReason::Percentile || measurement.reason==PeakReason::SparseBackground)
            && measurement.effective_nits<tone_peak*80 && hdr_samples && hdr_samples*1000<=count && tone_peak*80>minimum_hdr*1.1) {
             measurement.effective_nits=tone_peak*80;measurement.reason=PeakReason::HighlightDetail;
@@ -379,10 +381,13 @@ inline RenderedRegion render_region(const Frame& frame, const FrameRegion& regio
     const bool embedded_sdr = region.hdr && settings.mode == ContentMode::Auto
         && !wide_gamut && component_peak * 80 <= region.sdr_white * 1.01;
     const bool sdr = !region.hdr || settings.mode == ContentMode::Sdr || embedded_sdr;
-    const double white = !region.hdr ? 80 : (sdr ? region.sdr_white : settings.paper_white);
+    const double white = !region.hdr ? 80 : (sdr ? region.sdr_white : hdr_white);
     if (!std::isfinite(white) || white <= 0) throw std::runtime_error("Invalid reference white.");
     result.reference_white = white;
     const double gain = 80 / white * (sdr ? 1 : std::exp2(settings.exposure));
+    if(!sdr && settings.peak_nits>0) {
+        measurement.effective_nits=std::min(tone_peak*80,settings.peak_nits);measurement.reason=PeakReason::Configured;
+    }
     if(sdr) {measurement.reason=PeakReason::Sdr;measurement.reference_white=white;measurement.effective_nits=tone_peak*80;}
     if(active_diagnostics) active_diagnostics->peak({region.x,region.y,region.width,region.height,measurement});
     const double peak = std::max(1.0, !sdr && measurement.effective_nits!=tone_peak*80?measurement.effective_nits / 80 * gain:tone_peak * gain);
@@ -416,7 +421,7 @@ inline RenderedRegion render_region(const Frame& frame, const FrameRegion& regio
             if (!sdr && amount>0) {
                 // Compress in the source gamut before limiting colors to sRGB.
                 const Rgb wide = to_rec2020(color);
-                color = from_rec2020({lookup.map(wide.r),lookup.map(wide.g),lookup.map(wide.b)});
+                color=from_rec2020({lookup.map(wide.r),lookup.map(wide.g),lookup.map(wide.b)});
             }
             if(!sdr && amount<1) {
                 const Rgb normalized=Rgb{p.r,p.g,p.b}*(80/region.sdr_white);
@@ -443,10 +448,12 @@ inline Image render_sdr(const Frame& frame, const ColorSettings& settings, bool 
     if(active_diagnostics) active_diagnostics->dimensions(frame.width,frame.height,frame.hdr,unsigned(frame.regions.size()));
     const auto count = checked_pixels(frame.width, frame.height);
     if (frame.pixels.size() != count) throw std::runtime_error("Incomplete capture frame.");
-    if (!std::isfinite(settings.paper_white) || settings.paper_white < 40
+    if (!std::isfinite(settings.paper_white) || (settings.paper_white!=0 && settings.paper_white < 40)
         || settings.paper_white > 2000 || !std::isfinite(settings.exposure)
         || settings.exposure < -4 || settings.exposure > 4)
         throw std::runtime_error("Color settings are out of range.");
+    if(!std::isfinite(settings.peak_nits) || settings.peak_nits<0 || settings.peak_nits>10000
+       || (settings.peak_nits>0 && settings.peak_nits<40)) throw std::runtime_error("HDR peak must be zero or between 40 and 10000 nits.");
     if(settings.peak_method!=PeakMethod::Observed && settings.peak_method!=PeakMethod::Robust)
         throw std::runtime_error("Invalid HDR peak method.");
     Image image;

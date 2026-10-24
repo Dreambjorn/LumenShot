@@ -104,6 +104,8 @@ inline void save_master(const std::filesystem::path& path, const Frame& source) 
         const Pixel& p = source.pixels[i];
         pixels[i*4] = float_to_half(p.r); pixels[i*4+1] = float_to_half(p.g);
         pixels[i*4+2] = float_to_half(p.b); pixels[i*4+3] = float_to_half(1);
+        // JPEG XR canonicalizes signed zero without changing its value.
+        for(unsigned channel=0;channel<3;++channel) if(pixels[i*4+channel]==0x8000) pixels[i*4+channel]=0;
     }
     check(frame->WritePixels(source.height, source.width*8, UINT(pixels.size()*sizeof(std::uint16_t)),
           reinterpret_cast<BYTE*>(pixels.data())), "Cannot write HDR original");

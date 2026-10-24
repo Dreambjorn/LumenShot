@@ -94,6 +94,16 @@ int wmain(int argc,wchar_t** argv) try {
         choose(MonitorChoice,0);require(load_settings().monitor.empty(),"Active-monitor choice did not persist");
     }
     app.show_page(1);
+    SetDlgItemTextW(window,PeakNits,L"600");wait_for_edits(app);
+    require(app.settings.color.peak_nits==600 && load_settings().color.peak_nits==600 && app.settings.color.paper_white==0,
+            "Game peak did not persist independently of automatic white");
+    app.capture_settings=app.settings;app.busy=true;SetDlgItemTextW(window,PeakNits,L"650");wait_for_edits(app);
+    require(app.capture_settings.color.peak_nits==600 && app.settings.color.peak_nits==650,
+            "Peak edit changed an in-flight capture");app.busy=false;
+    SetDlgItemTextW(window,PeakNits,L"10001");wait_for_edits(app);
+    require(app.settings.color.peak_nits==650 && app.invalid_edits,"Invalid game peak was persisted");
+    SetDlgItemTextW(window,PeakNits,L"600");wait_for_edits(app);
+    require(!app.invalid_edits && load_settings().color.peak_nits==600,"Corrected game peak did not clear validation");
     HWND sharpness=GetDlgItem(window,Sharpness);SetFocus(sharpness);
     require(Settings{}.sharpness==0 && SendMessageW(sharpness,TBM_GETPOS,0,0)==0,"Sharpness must default to off");
     require(text(GetDlgItem(window,SharpnessValue))==L"Off","Zero sharpness label is unclear");
@@ -153,7 +163,7 @@ int wmain(int argc,wchar_t** argv) try {
     toggle(KeepOriginal,false);require(!load_settings().keep_original && !IsWindowVisible(GetDlgItem(window,HdrFormatChoice)),"HDR retention required manual saving");
     toggle(KeepOriginal,true);choose(HdrFormatChoice,0);
     SetFocus(GetDlgItem(window,PaperWhite));SetDlgItemTextW(window,PaperWhite,L"250");
-    require(app.settings.color.paper_white==203,"Text edit saved before debounce");
+    require(app.settings.color.paper_white==0,"Text edit saved before debounce");
     wait_for_edits(app);
     require(app.settings.color.paper_white==250 && load_settings().color.paper_white==250,"Valid reference white did not save automatically");
     SetDlgItemTextW(window,PaperWhite,L"2");wait_for_edits(app);
