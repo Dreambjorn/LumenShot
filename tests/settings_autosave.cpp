@@ -40,9 +40,25 @@ int wmain(int argc,wchar_t** argv) try {
     app.settings.folder=std::filesystem::path(argv[1]);app.settings.key=VK_F9;app.settings.modifiers=MOD_CONTROL|MOD_SHIFT|MOD_ALT;
     INITCOMMONCONTROLSEX common{sizeof(common),ICC_STANDARD_CLASSES};InitCommonControlsEx(&common);
     WNDCLASSW wc{};wc.lpfnWndProc=window_proc;wc.hInstance=GetModuleHandleW(nullptr);wc.lpszClassName=L"HdrAutosaveFixture";RegisterClassW(&wc);
+    HWND owner=CreateWindowExW(WS_EX_TOOLWINDOW,L"STATIC",L"Owned startup shortcut collision",WS_POPUP,0,0,0,0,nullptr,nullptr,wc.hInstance,nullptr);
+    require(owner && RegisterHotKey(owner,778,app.settings.modifiers|MOD_NOREPEAT,VK_F9),"Cannot reserve the owned startup shortcut");
+    struct ReleaseOwner {HWND value;~ReleaseOwner(){UnregisterHotKey(value,778);DestroyWindow(value);}} release_owner{owner};
     HWND window=CreateWindowExW(0,wc.lpszClassName,L"Owned automatic settings",WS_OVERLAPPEDWINDOW,0,0,714,750,nullptr,nullptr,wc.hInstance,&app);
-    require(window!=nullptr && app.registered_key==VK_F9,"Cannot create owned settings with its fixture shortcut");
+    require(window!=nullptr && !app.registered_key,"Startup shortcut conflict was not detected");
     struct Close {HWND value;~Close(){if(IsWindow(value))DestroyWindow(value);}} close{window};
+    const auto pump_until=[&](const auto& done,unsigned milliseconds) {
+        const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(milliseconds);
+        while(!done() && std::chrono::steady_clock::now()<deadline) {
+            MSG message{};while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){TranslateMessage(&message);DispatchMessageW(&message);}
+            Sleep(5);
+        }
+    };
+    pump_until([]{return false;},1200);
+    require(!app.registered_key && text(app.status).find(L"already in use")!=std::wstring::npos,"Retry took a conflicting shortcut or hid its warning");
+    UnregisterHotKey(owner,778);
+    pump_until([&]{return app.registered_key==VK_F9;},3000);
+    require(app.registered_key==VK_F9,"Closing the shortcut owner did not recover capture without restarting");
+    require(text(app.status).find(L"Ready. Press ") == 0,"Shortcut recovery did not update hidden-tray readiness");
     const auto changed=[&](int id,int code=BN_CLICKED){SendMessageW(window,WM_COMMAND,MAKEWPARAM(id,code),reinterpret_cast<LPARAM>(GetDlgItem(window,id)));};
     const auto choose=[&](int id,int index){SendDlgItemMessageW(window,id,CB_SETCURSEL,index,0);changed(id,CBN_SELCHANGE);};
     const auto toggle=[&](int id,bool value){SendDlgItemMessageW(window,id,BM_SETCHECK,value?BST_CHECKED:BST_UNCHECKED,0);changed(id);};

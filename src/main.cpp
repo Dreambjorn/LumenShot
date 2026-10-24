@@ -19,7 +19,7 @@ using namespace hdrshot;
 namespace {
 constexpr wchar_t window_class[] = L"LumenShotAppWindow";
 constexpr UINT done_message = WM_APP + 1, tray_message = WM_APP + 2;
-constexpr int hotkey_id = 1, cancel_hotkey_id = 2, tray_id = 1, countdown_timer = 1, settings_timer = 2;
+constexpr int hotkey_id = 1, cancel_hotkey_id = 2, tray_id = 1, countdown_timer = 1, settings_timer = 2, hotkey_retry_timer = 3;
 bool command_line_mode=false;
 enum ControlId { Folder=100, Browse, MonitorChoice, BackendChoice, ContentChoice, PaperWhite,
                  Exposure, KeepOriginal, ModifierCtrl, ModifierShift, ModifierAlt, KeyChoice,
@@ -265,11 +265,26 @@ struct App {
         if(registered_key==settings.key && registered_modifiers==settings.modifiers) return;
         UnregisterHotKey(window,hotkey_id);
         registered_key=0;
-        if (!RegisterHotKey(window,hotkey_id,settings.modifiers|MOD_NOREPEAT,settings.key))
+        if (!RegisterHotKey(window,hotkey_id,settings.modifiers|MOD_NOREPEAT,settings.key)) {
+            SetTimer(window,hotkey_retry_timer,1000,nullptr);
+            subtitle=L"Shortcut unavailable  |  "+hotkey_label(settings);
+            InvalidateRect(window,nullptr,TRUE);
             throw std::runtime_error("Shortcut is already in use. Close the other capture app or choose a different key. Windows screen snipping may reserve Print Screen.");
+        }
+        KillTimer(window,hotkey_retry_timer);
         registered_key=settings.key;registered_modifiers=settings.modifiers;
         subtitle=L"Ready  |  "+hotkey_label(settings);
         InvalidateRect(window,nullptr,TRUE);
+    }
+    void retry_hotkey() {
+        if(registered_key) {KillTimer(window,hotkey_retry_timer);return;}
+        try {register_hotkey();}
+        catch(const std::exception&) {return;}
+        const auto message=text(status);
+        if(!busy && !countdown && !invalid_edits
+           && (message.find(L"Shortcut is already in use.")==0
+               || message.find(L"Screenshot shortcut is unavailable.")!=std::wstring::npos))
+            set_status(L"Ready. Press "+hotkey_label(settings)+L" to select an area.");
     }
     void create_controls() {
         body_font=CreateFontW(-16,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
@@ -678,6 +693,7 @@ LRESULT CALLBACK window_proc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
             return 0;
         case WM_TIMER:
             if(wp==settings_timer) app->flush_edits();
+            if(wp==hotkey_retry_timer) app->retry_hotkey();
             if (wp==countdown_timer && app->countdown>0 && --app->countdown<=0) {KillTimer(window,countdown_timer);app->begin_work();}
             return 0;
         case WM_HOTKEY:
@@ -693,6 +709,7 @@ LRESULT CALLBACK window_proc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
             return 0;
         case WM_CLOSE: app->flush_edits();ShowWindow(window,SW_HIDE);return 0;
         case WM_DESTROY: {
+            KillTimer(window,hotkey_retry_timer);
             UnregisterHotKey(window,hotkey_id);app->release_escape();
             NOTIFYICONDATAW icon{};icon.cbSize=sizeof(icon);icon.hWnd=window;icon.uID=tray_id;
             Shell_NotifyIconW(NIM_DELETE,&icon);PostQuitMessage(0);return 0;
