@@ -29,6 +29,7 @@ hdrshot_test(diagnostics_tests platform/diagnostics_tests.cpp "${evidence}/diagn
 hdrshot_test(settings_autosave ui/settings_autosave.cpp "${evidence}/settings_autosave")
 hdrshot_test(platform_tests capture/platform_tests.cpp "${evidence}/fixtures")
 hdrshot_test(selector_tests ui/selector_tests.cpp "${evidence}/fixtures")
+hdrshot_test(window_snap_tests ui/window_snap_tests.cpp "${evidence}/window_snap_tests")
 hdrshot_test(app_controls ui/app_controls.cpp)
 target_sources(app_controls PRIVATE "${HDRSHOT_NOTICES_RC}")
 hdrshot_test(app_workflow app/app_workflow.cpp "${evidence}/workflow")

@@ -1,5 +1,6 @@
 #pragma once
 #include "image/color.hpp"
+#include "ui/window_snap.hpp"
 #include <commdlg.h>
 #include <windowsx.h>
 #include <initializer_list>
@@ -201,7 +202,8 @@ class RegionSelector {
     Image image_;
     SelectionSurface original_,dimmed_,buffer_;
     RECT last_visual_{};
-    RECT selection_{},drag_start_{};
+    RECT selection_{},drag_start_{},snap_hover_{},snap_pending_{};
+    std::vector<RECT> snap_windows_;
     POINT anchor_{},text_origin_{};
     std::vector<Annotation> marks_;
     Annotation current_;
@@ -280,6 +282,7 @@ class RegionSelector {
             include(selection);
             if(!drag_) {include(vertical_);include(horizontal_);}
         }
+        if(valid_rect(snap_hover_)) {RECT hover=snap_hover_;InflateRect(&hover,2,2);include(hover);}
         if(!hint_.empty()) include(hint_bounds_);
         return bounds;
     }
@@ -332,6 +335,8 @@ class RegionSelector {
         commit_text();
         hint_.clear();hover_=-1;
         anchor_=clamp_point(p);drag_start_=selection_;
+        snap_pending_=valid_rect(selection_)?RECT{}:window_snap_at(snap_windows_,anchor_);
+        snap_hover_={};
         resize_=hit_handle(p);
         if(resize_) drag_=3;
         else if(valid_rect(selection_) && PtInRect(&selection_,p) && tool_!=MarkTool::Select) {
@@ -346,7 +351,8 @@ class RegionSelector {
             drag_=4;current_={tool_,color_,{p},{}};
         } else if(valid_rect(selection_) && PtInRect(&selection_,p)) drag_=2;
         else {
-            drag_=1;selection_={p.x,p.y,p.x,p.y};marks_.clear();
+            drag_=valid_rect(snap_pending_)?5:1;snap_hover_=snap_pending_;
+            selection_={anchor_.x,anchor_.y,anchor_.x,anchor_.y};marks_.clear();
             tool_=MarkTool::Select;quick_copy_=(GetKeyState(VK_CONTROL)&0x8000)!=0;
         }
         SetCapture(window_);invalidate();
@@ -354,6 +360,12 @@ class RegionSelector {
     void mouse_move(POINT p) {
         p=clamp_point(p);
         const RECT before=selection_;
+        if(drag_==5) {
+            // Wait for release so window clicks still allow free dragging.
+            if(std::abs(p.x-anchor_.x)<GetSystemMetrics(SM_CXDRAG)
+               && std::abs(p.y-anchor_.y)<GetSystemMetrics(SM_CYDRAG)) return;
+            drag_=1;snap_hover_=snap_pending_={};
+        }
         if(drag_==1) selection_=normalize_rect(anchor_,p);
         else if(drag_==2) {
             const LONG dx=std::clamp(p.x-anchor_.x,-drag_start_.left,LONG(image_.width)-drag_start_.right);
@@ -375,6 +387,8 @@ class RegionSelector {
             else current_.points.back()=p;
         } else {
             const int previous_hover=hover_;
+            const RECT previous_snap=snap_hover_;
+            snap_hover_=valid_rect(selection_)?RECT{}:window_snap_at(snap_windows_,p);
             hover_=hit_button(p);
             static const wchar_t* names[]={L"Pencil",L"Line",L"Arrow",L"Rectangle",L"Marker",L"Text",
                 L"Color",L"Undo (Ctrl+Z)",L"Copy (Ctrl+C)",L"Save (Ctrl+S)",L"Cancel (Esc)"};
@@ -388,8 +402,8 @@ class RegionSelector {
             else if(handle&12) cursor=IDC_SIZENS;
             else if(tool_==MarkTool::Select && PtInRect(&selection_,p)) cursor=IDC_SIZEALL;
             SetCursor(LoadCursorW(nullptr,cursor));
-            if(hover_==previous_hover) return;
-            if(hover_>=0 && window_) {
+            if(hover_==previous_hover && EqualRect(&previous_snap,&snap_hover_)) return;
+            if((hover_>=0 || valid_rect(snap_hover_)) && window_) {
                 TRACKMOUSEEVENT tracking{sizeof(tracking),TME_LEAVE,window_,0};TrackMouseEvent(&tracking);
             }
         }
@@ -401,12 +415,14 @@ class RegionSelector {
         if(!drag_) return;
         mouse_move(p);
         const int previous=drag_;drag_=0;ReleaseCapture();
+        if(previous==5) selection_=snap_pending_;
+        snap_hover_=snap_pending_={};
         if(previous==2) {
             const LONG dx=selection_.left-drag_start_.left,dy=selection_.top-drag_start_.top;
             for(auto& mark:marks_) for(auto& point:mark.points) {point.x+=dx;point.y+=dy;}
         }
         if(previous==4) {marks_.push_back(std::move(current_));current_={};}
-        if(previous==1 && quick_copy_ && valid_rect(selection_)) finish(SelectionAction::Copy);
+        if((previous==1 || previous==5) && quick_copy_ && valid_rect(selection_)) finish(SelectionAction::Copy);
         invalidate();
     }
     void key(UINT key) {
@@ -547,7 +563,7 @@ class RegionSelector {
             case WM_PRINTCLIENT:self->paint(reinterpret_cast<HDC>(wp));return 0;
             case WM_LBUTTONDOWN:self->mouse_down({GET_X_LPARAM(lp),GET_Y_LPARAM(lp)});return 0;
             case WM_MOUSEMOVE:self->mouse_move({GET_X_LPARAM(lp),GET_Y_LPARAM(lp)});return 0;
-            case WM_MOUSELEAVE:self->hint_.clear();self->hover_=-1;self->invalidate();return 0;
+            case WM_MOUSELEAVE:self->hint_.clear();self->hover_=-1;self->snap_hover_={};self->invalidate();return 0;
             case WM_LBUTTONUP:self->mouse_up({GET_X_LPARAM(lp),GET_Y_LPARAM(lp)});return 0;
             case WM_RBUTTONUP:self->commit_text(true);self->tool_=MarkTool::Select;self->invalidate();return 0;
             case WM_HOTKEY:if(wp==selection_escape_hotkey_id) self->finish(SelectionAction::Cancel);return 0;
@@ -585,6 +601,13 @@ public:
         const int width=dirty.right-dirty.left,height=dirty.bottom-dirty.top;
         // Frozen pixels stay in GDI surfaces; pointer updates repaint only their damaged area.
         BitBlt(dc,dirty.left,dirty.top,width,height,dimmed_.dc(),dirty.left,dirty.top,SRCCOPY);
+        if(!valid_rect(selection_) && valid_rect(snap_hover_)) {
+            RECT visible{};
+            if(IntersectRect(&visible,&snap_hover_,&dirty))
+                BitBlt(dc,visible.left,visible.top,visible.right-visible.left,visible.bottom-visible.top,
+                       original_.dc(),visible.left,visible.top,SRCCOPY);
+            HBRUSH outline=CreateSolidBrush(RGB(100,190,255));FrameRect(dc,&snap_hover_,outline);DeleteObject(outline);
+        }
         if(valid_rect(selection_)) {
             const int saved=SaveDC(dc);
             IntersectClipRect(dc,selection_.left,selection_.top,selection_.right,selection_.bottom);
@@ -627,6 +650,7 @@ public:
         wc.lpszClassName=class_name;wc.hCursor=LoadCursorW(nullptr,IDC_CROSS);
         if(!RegisterClassW(&wc) && GetLastError()!=ERROR_CLASS_ALREADY_EXISTS)
             throw std::runtime_error("Cannot create selection interface.");
+        snap_windows_=window_snap_rectangles(screen_bounds,GetCurrentProcessId());
         // Ownership can raise or reactivate background settings.
         window_=CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW,class_name,L"LumenShot selection",
             WS_POPUP,screen_bounds.left,screen_bounds.top,int(image_.width),int(image_.height),
@@ -639,6 +663,7 @@ public:
             ~ReleaseEscape(){if(registered) UnregisterHotKey(window,selection_escape_hotkey_id);}
         } release_escape{window_,escape_registered};
         ShowWindow(window_,SW_SHOW);SetForegroundWindow(window_);SetFocus(window_);
+        POINT pointer{};if(GetCursorPos(&pointer) && ScreenToClient(window_,&pointer)) mouse_move(pointer);
         MSG message{};
         while(!finished_) {
             const BOOL received=GetMessageW(&message,nullptr,0,0);
