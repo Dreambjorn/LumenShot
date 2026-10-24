@@ -58,6 +58,12 @@ int wmain(int argc,wchar_t** argv) try {
     require(WritePrivateProfileStringW(L"Screenshot",L"ShowMagnifier",L"0",config_path().c_str())!=FALSE,"Cannot write owned magnifier preference");
     require(!load_settings().show_magnifier,"Disabled magnifier preference was ignored");
     require(WritePrivateProfileStringW(L"Screenshot",L"ShowMagnifier",nullptr,config_path().c_str())!=FALSE,"Cannot remove owned magnifier preference");
+    require(!Settings{}.annotate_hdr && !load_settings().annotate_hdr,"HDR drawings must require an explicit choice");
+    for(const wchar_t* invalid:{L"-1",L"2",L"nan"}) {
+        require(WritePrivateProfileStringW(L"Screenshot",L"AnnotateHdr",invalid,config_path().c_str()),"Cannot seed invalid HDR annotation preference");
+        require(!load_settings().annotate_hdr,"Invalid preference enabled HDR drawings");
+    }
+    require(WritePrivateProfileStringW(L"Screenshot",L"AnnotateHdr",nullptr,config_path().c_str()),"Cannot remove owned HDR annotation preference");
     App app;app.startup=StartupRegistration(key);app.settings=Settings{};
     app.settings.folder=std::filesystem::path(argv[1]);app.settings.key=VK_F9;app.settings.modifiers=MOD_CONTROL|MOD_SHIFT|MOD_ALT;
     INITCOMMONCONTROLSEX common{sizeof(common),ICC_STANDARD_CLASSES};InitCommonControlsEx(&common);
@@ -180,7 +186,19 @@ int wmain(int argc,wchar_t** argv) try {
     app.show_page(OutputPage);
     choose(HdrFormatChoice,1);require(load_settings().hdr_format==HdrFormat::JpegXr,"HDR format required manual saving");
     toggle(KeepOriginal,false);require(!load_settings().keep_original && !IsWindowVisible(GetDlgItem(window,HdrFormatChoice)),"HDR retention required manual saving");
+    require(!IsWindowVisible(GetDlgItem(window,HdrAnnotationChoice)) && !IsWindowVisible(GetDlgItem(window,HdrPrivacyLabel)),
+            "HDR annotation controls remained visible with HDR saving disabled");
     toggle(KeepOriginal,true);choose(HdrFormatChoice,0);
+    require(IsWindowVisible(GetDlgItem(window,HdrAnnotationChoice)),"HDR drawing choice did not return with HDR saving");
+    choose(HdrAnnotationChoice,1);
+    require(app.settings.annotate_hdr && load_settings().annotate_hdr,"Annotated HDR choice did not save automatically");
+    app.capture_settings=app.settings;app.busy=true;choose(HdrAnnotationChoice,0);
+    require(!app.settings.annotate_hdr && !load_settings().annotate_hdr && app.capture_settings.annotate_hdr,
+            "HDR drawing choice changed an in-flight capture");app.busy=false;
+    choose(HdrAnnotationChoice,1);
+    save_settings_preview(window,std::filesystem::path(argv[1])/L"hdr-annotations-dark.png");
+    toggle(DarkMode,false);save_settings_preview(window,std::filesystem::path(argv[1])/L"hdr-annotations-light.png");toggle(DarkMode,true);
+    choose(HdrAnnotationChoice,0);
     app.show_page(ImagePage);
     SetFocus(GetDlgItem(window,PaperWhite));SetDlgItemTextW(window,PaperWhite,L"250");
     require(app.settings.color.paper_white==0,"Text edit saved before debounce");

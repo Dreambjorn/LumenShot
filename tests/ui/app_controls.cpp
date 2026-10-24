@@ -71,7 +71,7 @@ int wmain() try {
     const std::pair<int,std::vector<int>> groups[]={
         {CapturePage,{MonitorChoice,BackendChoice,ModifierCtrl,ModifierShift,ModifierAlt,KeyChoice,ShowMagnifier}},
         {ImagePage,{ContentChoice,PeakNits,PaperWhite,Exposure,ImageSize,Sharpness}},
-        {OutputPage,{ControlId::Folder,Browse,KeepOriginal,HdrFormatChoice}},
+        {OutputPage,{ControlId::Folder,Browse,KeepOriginal,HdrFormatChoice,HdrAnnotationChoice,HdrAnnotationLabel,HdrPrivacyLabel}},
         {GeneralPage,{DarkMode,StartWithWindows,LicensesButton}}};
     const wchar_t* titles[]={L"Capture",L"Image",L"Output",L"General"};
     for(const auto& group:groups) {
@@ -167,6 +167,10 @@ int wmain() try {
     SendDlgItemMessageW(settings,KeepOriginal,BM_SETCHECK,BST_CHECKED,0);
     SendMessageW(settings,WM_COMMAND,KeepOriginal,0);
     require(IsWindowVisible(format),"Restoring HDR copy did not restore its dropdown");
+    HWND annotations=GetDlgItem(settings,HdrAnnotationChoice);
+    require(annotations && IsWindowVisible(annotations) && SendMessageW(annotations,CB_GETCOUNT,0,0)==2,
+            "Output tab must offer original and annotated HDR");
+    require(SendMessageW(annotations,CB_GETCURSEL,0,0)==0,"HDR annotation default must preserve the original");
     DWORD affinity=0;
     require(GetWindowDisplayAffinity(settings,&affinity) && affinity==WDA_NONE,
             "Open settings must be included in screenshots");

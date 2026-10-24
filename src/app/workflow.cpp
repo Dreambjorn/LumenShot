@@ -43,7 +43,7 @@ WorkResult process_output(const Settings& settings,const Frame& frame,const Imag
             jpeg=settings.hdr_format==HdrFormat::UltraJpeg && frame.width>=8 && frame.height>=8;
             const auto originals=settings.folder/L"HDR images";
             std::filesystem::create_directories(originals);
-            const auto destination=originals/(name+(jpeg?L".jpg":L".jxr"));
+            const auto destination=originals/(name+(settings.annotate_hdr?L"-annotated":L"")+(jpeg?L".jpg":L".jxr"));
             if(jpeg) save_hdr_jpeg(destination,frame,hdr_base?*hdr_base:converted);
             else if(imported.empty() || settings.sharpness || settings.scale!=100) save_master(destination,frame);
             else copy_master(imported,destination,frame.width,frame.height);
@@ -67,6 +67,8 @@ WorkResult process_output(const Settings& settings,const Frame& frame,const Imag
     if(settings.scale!=100) details<<L"\nImage size: "<<settings.scale<<L"%";
     if(!clipboard) details<<L"\n\nPNG: "<<output.wstring();
     if(!original.empty()) details<<(jpeg?L"\n\nHDR JPEG: ":L"\n\nHDR JPEG XR: ")<<original.wstring();
+    if(!original.empty()) details<<L"\nHDR content: "<<(settings.annotate_hdr?L"Annotated HDR":L"Original HDR")
+                                <<L" (privacy effects retained)";
     if(!warning.empty()) details<<L"\n\n"<<warning;
     result.details=details.str();
     return result;

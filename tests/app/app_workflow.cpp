@@ -157,10 +157,10 @@ int wmain(int argc,wchar_t** argv) try {
         return std::string(std::istreambuf_iterator<char>(input),{});
     };
     const std::pair<unsigned,unsigned> options[]={{100,0},{100,35},{125,35},{150,0},{200,35}};
-    for(const auto& [scale,sharpness]:options) for(bool marked:{false,true}) {
-        const auto suffix=std::to_wstring(scale)+L"-"+std::to_wstring(sharpness);
+    for(const auto& [scale,sharpness]:options) for(bool marked:{false,true}) for(bool annotated:{false,true}) {
+        const auto suffix=std::to_wstring(scale)+L"-"+std::to_wstring(sharpness)+(annotated?L"-annotated":L"-original");
         app.settings.folder=directory/((marked?L"jpeg-marked-":L"jpeg-unmarked-")+suffix);
-        app.settings.sharpness=sharpness;app.settings.scale=scale;app.capture_settings=app.settings;
+        app.settings.sharpness=sharpness;app.settings.scale=scale;app.settings.annotate_hdr=annotated;app.capture_settings=app.settings;
         Image expected_png;
         if(scale==100) {
             auto enhanced_preview=full_preview;sharpen_image(enhanced_preview,sharpness);
@@ -170,6 +170,12 @@ int wmain(int argc,wchar_t** argv) try {
             throw std::runtime_error("Sharpening fixture did not enhance any detail.");
         auto processed_hdr=hdr_selection;enhance_hdr(processed_hdr,scale,sharpness);
         const auto reference_jpeg=directory/((marked?L"marked-reference-":L"reference-")+suffix+L".jpg");
+        if(marked && annotated) {
+            const std::vector<Annotation> marks{{MarkTool::Pen,RGB(255,0,0),{{150,150},{300,150}},L""}};
+            const double sx=double(expected_png.width)/400,sy=double(expected_png.height)/250;
+            annotate_hdr(processed_hdr,marks,{100,100},sx,sy,app.settings.color.paper_white);
+            annotate(expected_png,marks,{100,100},sx,sy);
+        }
         save_hdr_jpeg(reference_jpeg,processed_hdr,expected_png);
         const auto reference_bytes=file_bytes(reference_jpeg);
         app.busy=true;
@@ -232,12 +238,13 @@ int wmain(int argc,wchar_t** argv) try {
         const unsigned probe_x=unsigned(std::lround(100.0*expected_png.width/preview_base.width));
         const unsigned probe_y=unsigned(std::lround(50.0*expected_png.height/preview_base.height));
         const auto hdr_offset=(std::size_t(probe_y)*hdr_decoded->stride[0]+probe_x)*4;
-        const Rgb hdr_expected=to_bt2020({.5,.4,.3})*(80.0/203);
+        const Rgb hdr_expected=to_bt2020(marked && annotated?Rgb{203.0/80,0,0}:Rgb{.5,.4,.3})*(80.0/203);
         const double hdr_channels[]={hdr_expected.r,hdr_expected.g,hdr_expected.b};
         for(unsigned channel=0;channel<3;++channel) {
             const double actual=half_to_float(hdr_pixels[hdr_offset+channel]);
             std::cout<<"CROPPED_HDR channel "<<channel<<" nits "<<actual*203<<" expected "<<hdr_channels[channel]*203<<"\n";
-            if(std::abs(actual-hdr_channels[channel])>.01)
+            const double tolerance=marked && annotated?std::max(.01,hdr_channels[channel]*.06):.01;
+            if(std::abs(actual-hdr_channels[channel])>tolerance)
                 throw std::runtime_error("Preview matching changed the original HDR brightness or color.");
         }
         ComPtr<IWICBitmapDecoder> png_decoder;
@@ -254,6 +261,7 @@ int wmain(int argc,wchar_t** argv) try {
         if(marked && (png_pixels[mark_offset]!=0 || png_pixels[mark_offset+1]!=0 || png_pixels[mark_offset+2]!=255))
             throw std::runtime_error("Annotated SDR output lost its pen stroke.");
     }
+    app.settings.annotate_hdr=false;
     Settings copy_settings=app.settings;copy_settings.keep_original=false;
     copy_settings.folder=directory/L"clipboard-result";
     copy_settings.scale=150;copy_settings.sharpness=35;
@@ -264,12 +272,12 @@ int wmain(int argc,wchar_t** argv) try {
         throw std::runtime_error("Clipboard output lost enhancements or its saved settings.");
     unsigned privacy_exports=0;
     for(const auto format:{HdrFormat::UltraJpeg,HdrFormat::JpegXr}) for(const unsigned scale:{100u,125u})
-        for(const auto tool:{MarkTool::Redact,MarkTool::Blur,MarkTool::Pixelate}) {
+        for(bool annotated:{false,true}) for(const auto tool:{MarkTool::Redact,MarkTool::Blur,MarkTool::Pixelate}) {
             std::string first_png,first_hdr;
             for(unsigned variant=0;variant<(tool==MarkTool::Redact?2u:1u);++variant) {
-                const auto suffix=std::to_wstring(int(format))+L"-"+std::to_wstring(scale)+L"-"+std::to_wstring(int(tool))+L"-"+std::to_wstring(variant);
+                const auto suffix=std::to_wstring(int(format))+L"-"+std::to_wstring(scale)+L"-"+std::to_wstring(int(tool))+L"-"+std::to_wstring(variant)+(annotated?L"-annotated":L"-original");
                 app.settings.folder=directory/(L"privacy-"+suffix);app.settings.hdr_format=format;
-                app.settings.scale=scale;app.settings.sharpness=35;app.settings.keep_original=true;
+                app.settings.scale=scale;app.settings.sharpness=35;app.settings.keep_original=true;app.settings.annotate_hdr=annotated;
                 app.settings.color.peak_nits=4000;app.capture_settings=app.settings;
                 Frame private_frame=frame;
                 for(unsigned y=150;y<=220;++y) for(unsigned x=150;x<=300;++x) {
@@ -369,7 +377,7 @@ int wmain(int argc,wchar_t** argv) try {
         throw std::runtime_error("Escape did not finish the complete capture workflow.");
     if(std::filesystem::exists(app.settings.folder))
         throw std::runtime_error("Canceled screenshot created output files.");
-    std::cout<<"HDR JPEG workflow passed: preview tone mapping retained with a bright peak outside the crop; scaling and sharpening retained in HDR images; SDR annotations excluded.\n";
+    std::cout<<"HDR JPEG workflow passed: preview tone mapping retained with a bright peak outside the crop; scaling and sharpening retained in HDR images; original and annotated HDR choices verified.\n";
     std::cout<<"App Escape workflow passed: active overlay closed without output; shortcut released.\n";
     std::cout<<"App workflow passed: owned HDR frame -> selector -> async save -> scaled SDR PNG + lossless processed HDR + settings snapshot.\n";
     std::cout<<"No desktop capture, game, launcher, or system clipboard was used by this workflow fixture.\n";

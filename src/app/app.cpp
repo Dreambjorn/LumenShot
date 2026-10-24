@@ -140,8 +140,9 @@ void App::finish_work() {
                     const double scale_y=double(converted.height)/(selected.rect.bottom-selected.rect.top);
                     Image hdr_base;
                     if(snapshot.keep_original && cropped.hdr) {
-                        apply_privacy_marks(cropped,selected.marks,origin,scale_x,scale_y);
-                        if(snapshot.hdr_format==HdrFormat::UltraJpeg && !selected.marks.empty()) {
+                        if(snapshot.annotate_hdr) annotate_hdr(cropped,selected.marks,origin,scale_x,scale_y,snapshot.color.paper_white);
+                        else apply_privacy_marks(cropped,selected.marks,origin,scale_x,scale_y);
+                        if(!snapshot.annotate_hdr && snapshot.hdr_format==HdrFormat::UltraJpeg && !selected.marks.empty()) {
                             hdr_base=converted;apply_privacy_marks(hdr_base,selected.marks,origin,scale_x,scale_y);
                         }
                     }

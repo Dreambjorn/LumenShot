@@ -4,6 +4,7 @@
 #include "ui/magnifier.hpp"
 #include "ui/selection_toolbars.hpp"
 #include "image/privacy.hpp"
+#include "image/annotation_compositor.hpp"
 #include <commdlg.h>
 #include <windowsx.h>
 #include <initializer_list>
@@ -175,6 +176,23 @@ inline void annotate(Image& image,const std::vector<Annotation>& marks,POINT off
     std::memcpy(image.bgra.data(),data,image.bgra.size());
     for(std::size_t i=3;i<image.bgra.size();i+=4) image.bgra[i]=255;
     SelectObject(dc,old);DeleteObject(bitmap);DeleteDC(dc);
+}
+inline void annotate_hdr(Frame& frame,const std::vector<Annotation>& marks,POINT offset={},
+                         double scale_x=1,double scale_y=1,double paper_white=0) {
+    DiagnosticTimer timing(DiagnosticStage::Annotation);
+    if(marks.empty()) return;
+    Image coverage;coverage.width=frame.width;coverage.height=frame.height;
+    coverage.bgra.resize(checked_pixels(frame.width,frame.height)*4);
+    for(const auto& mark:marks) {
+        if(privacy_tool(mark.tool)) {apply_privacy_marks(frame,{mark},offset,scale_x,scale_y);continue;}
+        // GDI discards alpha, so a white silhouette provides independent stroke coverage.
+        std::fill(coverage.bgra.begin(),coverage.bgra.end(),0);
+        auto silhouette=mark;silhouette.color=RGB(255,255,255);
+        annotate(coverage,{silhouette},offset,scale_x,scale_y);
+        const auto& lookup=srgb_lookup();
+        composite_annotation(frame,coverage,{lookup[GetRValue(mark.color)],lookup[GetGValue(mark.color)],
+                                             lookup[GetBValue(mark.color)]},paper_white);
+    }
 }
 inline std::vector<std::uint8_t> clipboard_dib(const Image& image) {
     const auto bytes=checked_pixels(image.width,image.height)*4;

@@ -116,6 +116,9 @@ void App::create_controls() {
     HWND keep=control(L"BUTTON",L"Save HDR image",BS_AUTOCHECKBOX|WS_TABSTOP,KeepOriginal,left,236,column_width,field_height);
     SendMessageW(keep,BM_SETCHECK,settings.keep_original?BST_CHECKED:BST_UNCHECKED,0);
     add_combo(HdrFormatChoice,{L"Ultra HDR JPEG (.jpg) - recommended",L"JPEG XR (.jxr) - lossless HDR"},int(settings.hdr_format),right,236,column_width);
+    control(L"STATIC",L"HDR content",SS_LEFT,HdrAnnotationLabel,left,286,column_width,22);
+    add_combo(HdrAnnotationChoice,{L"Original HDR (no drawings)",L"Annotated HDR (include drawings)"},settings.annotate_hdr?1:0,left,312,content_width);
+    control(L"STATIC",L"Redaction, blur and pixelation apply to both HDR options.",SS_LEFT,HdrPrivacyLabel,left,352,content_width,22);
     creating_page=GeneralPage;
     HWND dark=control(L"BUTTON",L"Dark mode",BS_AUTOCHECKBOX|WS_TABSTOP,DarkMode,left,168,column_width,field_height);
     SendMessageW(dark,BM_SETCHECK,settings.dark_mode?BST_CHECKED:BST_UNCHECKED,0);
@@ -152,7 +155,8 @@ void App::show_page(int page) {
 
 void App::update_hdr_choice() {
     const bool keep=SendDlgItemMessageW(window,KeepOriginal,BM_GETCHECK,0,0)==BST_CHECKED;
-    ShowWindow(GetDlgItem(window,HdrFormatChoice),keep && active_page==OutputPage?SW_SHOWNA:SW_HIDE);
+    for(const int id:{HdrFormatChoice,HdrAnnotationChoice,HdrAnnotationLabel,HdrPrivacyLabel})
+        ShowWindow(GetDlgItem(window,id),keep && active_page==OutputPage?SW_SHOWNA:SW_HIDE);
 }
 
 void App::update_sharpness_label() {
@@ -216,6 +220,8 @@ void App::read_controls(int changed) {
         next.keep_original=SendDlgItemMessageW(window,KeepOriginal,BM_GETCHECK,0,0)==BST_CHECKED;
     if(!changed || changed==HdrFormatChoice)
         next.hdr_format=SendDlgItemMessageW(window,HdrFormatChoice,CB_GETCURSEL,0,0)==1?HdrFormat::JpegXr:HdrFormat::UltraJpeg;
+    if(!changed || changed==HdrAnnotationChoice)
+        next.annotate_hdr=SendDlgItemMessageW(window,HdrAnnotationChoice,CB_GETCURSEL,0,0)==1;
     const bool shortcut=!changed || (changed>=ModifierCtrl && changed<=KeyChoice);
     if(shortcut) {
         next.modifiers=0;
@@ -340,7 +346,7 @@ LRESULT CALLBACK window_proc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
                 if(app->controls_ready && HIWORD(wp)==EN_CHANGE) app->queue_edit(LOWORD(wp));
                 if(app->controls_ready && HIWORD(wp)==EN_KILLFOCUS) app->flush_edits();
                 break;
-            case MonitorChoice: case BackendChoice: case ContentChoice: case HdrFormatChoice: case KeyChoice: case ImageSize:
+            case MonitorChoice: case BackendChoice: case ContentChoice: case HdrFormatChoice: case HdrAnnotationChoice: case KeyChoice: case ImageSize:
                 if(app->controls_ready && HIWORD(wp)==CBN_SELCHANGE) app->apply_setting(LOWORD(wp));
                 break;
             case KeepOriginal: case DarkMode: case ShowMagnifier: case StartWithWindows: case ModifierCtrl: case ModifierShift: case ModifierAlt:
