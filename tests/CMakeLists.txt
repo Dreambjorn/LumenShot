@@ -15,6 +15,7 @@ function(hdrshot_test name source)
 endfunction()
 
 hdrshot_test(color_tests image/color_tests.cpp)
+hdrshot_test(hdr_golden_tests image/hdr_golden_tests.cpp "${evidence}/hdr_golden_tests")
 hdrshot_test(sharpen_tests image/sharpen_tests.cpp "${evidence}/sharpen_tests")
 hdrshot_test(scaling_tests image/scaling_tests.cpp "${evidence}/scaling_tests")
 hdrshot_test(hdr_output_tests image/hdr_output_tests.cpp "${evidence}/hdr_output_tests")
