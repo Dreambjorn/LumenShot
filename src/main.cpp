@@ -252,6 +252,8 @@ struct App {
         TextOutW(dc,28,23,L"LumenShot",9);
         SelectObject(dc,small_font);SetTextColor(dc,theme.colors.muted);
         TextOutW(dc,28,66,subtitle.c_str(),int(subtitle.size()));
+        RECT footer{198,592,516,622};
+        DrawTextW(dc,L"Version " LUMENSHOT_VERSION,-1,&footer,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
     }
     void set_status(const std::wstring& message) {
         std::wstring display;
@@ -733,7 +735,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int) {
             command_line_mode=true;std::cout<<embedded_notices();return 0;
         }
         if (argc>1 && (wcscmp(argv[1],L"--help")==0 || wcscmp(argv[1],L"--version")==0)) {
-            std::cout<<"LumenShot 0.1.3\nUsage: LumenShot.exe [--settings | --tray | --capture | --import <file.jxr> | --licenses]\n"
+            std::cout<<"LumenShot " LUMENSHOT_VERSION "\nUsage: LumenShot.exe [--settings | --tray | --capture | --import <file.jxr> | --licenses]\n"
                      <<"External Windows capture only. No game injection or game-process access.\n";return 0;
         }
         const bool open_settings=argc>1 && wcscmp(argv[1],L"--settings")==0;

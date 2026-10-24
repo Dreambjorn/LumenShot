@@ -15,6 +15,7 @@ add_custom_target(manifest_shadow DEPENDS "${manifest_shadow}/default-manifest.o
 function(hdrshot_target target)
     add_dependencies(${target} libultrahdr manifest_shadow)
     target_compile_features(${target} PRIVATE cxx_std_17)
+    target_compile_definitions(${target} PRIVATE LUMENSHOT_VERSION="${PROJECT_VERSION}")
     target_include_directories(${target} PRIVATE "${uhdr_include}" "${CMAKE_SOURCE_DIR}/src")
     target_compile_options(${target} PRIVATE -O2 -Wall -Wextra -Werror -flarge-source-files -fstack-protector-strong)
     target_link_options(${target} PRIVATE -static -static-libgcc -static-libstdc++ "-B${manifest_shadow}/"
