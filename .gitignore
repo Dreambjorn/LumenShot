@@ -16,3 +16,6 @@ Screenshots/
 .codex/
 .agents/
 .aws/
+
+# Local planning and reference notes.
+*.md
