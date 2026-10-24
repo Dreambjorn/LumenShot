@@ -46,6 +46,12 @@ int wmain(int argc,wchar_t** argv) try {
     require(load_settings().color.mode==ContentMode::Hdr,"Automatic default replaced a saved HDR preference");
     require(WritePrivateProfileStringW(L"Screenshot",L"Content",nullptr,config_path().c_str())!=FALSE,"Cannot remove owned content key");
     require(load_settings().color.mode==ContentMode::Auto,"Missing content preference did not use Automatic");
+    require(Settings{}.color.peak_method==PeakMethod::Robust && load_settings().color.peak_method==PeakMethod::Robust,
+            "Fresh settings must use the compared robust peak method");
+    require(WritePrivateProfileStringW(L"Screenshot",L"PeakMethod",L"0",config_path().c_str())!=FALSE,"Cannot write owned observed-peak preference");
+    require(load_settings().color.peak_method==PeakMethod::Observed,"Observed peak fallback was not restored");
+    require(WritePrivateProfileStringW(L"Screenshot",L"PeakMethod",nullptr,config_path().c_str())!=FALSE,"Cannot remove owned peak key");
+    require(load_settings().color.peak_method==PeakMethod::Robust,"Missing peak preference did not use the compared default");
     App app;app.startup=StartupRegistration(key);app.settings=Settings{};
     app.settings.folder=std::filesystem::path(argv[1]);app.settings.key=VK_F9;app.settings.modifiers=MOD_CONTROL|MOD_SHIFT|MOD_ALT;
     INITCOMMONCONTROLSEX common{sizeof(common),ICC_STANDARD_CLASSES};InitCommonControlsEx(&common);
@@ -73,9 +79,12 @@ int wmain(int argc,wchar_t** argv) try {
     const auto choose=[&](int id,int index){SendDlgItemMessageW(window,id,CB_SETCURSEL,index,0);changed(id,CBN_SELCHANGE);};
     const auto toggle=[&](int id,bool value){SendDlgItemMessageW(window,id,BM_SETCHECK,value?BST_CHECKED:BST_UNCHECKED,0);changed(id);};
     ShowWindow(window,SW_SHOWNOACTIVATE);app.show_page(2);
+    app.settings.color.peak_method=PeakMethod::Observed;
     toggle(DarkMode,false);
+    require(load_settings().color.peak_method==PeakMethod::Observed,"Automatic settings save replaced the selected peak fallback");
     require(!app.settings.dark_mode && !load_settings().dark_mode && !app.theme.dark,"Dark mode required manual saving");
     require(IsWindowVisible(window),"Automatic checkbox save hid settings");
+    app.settings.color.peak_method=PeakMethod::Robust;
     toggle(DarkMode,true);require(load_settings().dark_mode && app.theme.dark,"Dark mode did not restore automatically");
     app.show_page(0);
     choose(BackendChoice,2);require(app.settings.backend==CaptureBackend::Desktop && load_settings().backend==CaptureBackend::Desktop,"Backend choice did not apply automatically");

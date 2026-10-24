@@ -251,7 +251,7 @@ int wmain(int argc,wchar_t** argv) try {
     const auto control=render_sdr(without_outlier,scenes[1].settings);
     const auto center=(std::size_t(128)*256+128)*4;
     save_image(directory/L"HDR-002"/L"without-outlier.png",control);
-    std::cout<<"PEAK BASELINE: hot-pixel midtone loss "<<int(control.bgra[center])-int(images[1].bgra[center])
+    std::cout<<"OBSERVED-MAX BASELINE: hot-pixel midtone loss "<<int(control.bgra[center])-int(images[1].bgra[center])
              <<" codes (LS-003).\n";
     report.close();observed.close();
     for(unsigned scene=0;scene<10;++scene) {
@@ -274,7 +274,7 @@ int wmain(int argc,wchar_t** argv) try {
         }
     }
     std::cout<<checks<<" HDR golden checks passed across HDR-001 through HDR-010.\n"
-             <<"Synthetic characterization only; known quality gaps remain measured, not fixed.\n";
+             <<"Frozen observed-maximum characterization; robust peak comparisons run separately.\n";
     return 0;
 } catch(const std::exception& error) {
     std::cerr<<"HDR golden fixture failed after "<<checks<<" checks: "<<error.what()<<'\n';return 1;

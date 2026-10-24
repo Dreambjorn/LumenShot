@@ -7,7 +7,7 @@ struct Fixture {
     const char* id;
     const char* name;
     Frame source;
-    ColorSettings settings{ContentMode::Hdr,203,0,false};
+    ColorSettings settings{ContentMode::Hdr,203,0,false,PeakMethod::Observed};
     Image sdr_reference;
     FrameRegion reference_area;
 };
@@ -43,7 +43,7 @@ inline Fixture make(unsigned index) {
         "sdr-window","elevated-sdr-white","transparent-overlay","near-black","bright-sdr","mixed-monitors"};
     if(index>=std::size(ids)) throw std::runtime_error("Unknown HDR fixture.");
     Fixture fixture{ids[index],names[index],{}, {}, {}, {}};
-    fixture.settings={ContentMode::Hdr,203,0,false};
+    fixture.settings={ContentMode::Hdr,203,0,false,PeakMethod::Observed};
     auto& frame=fixture.source;
     frame.width=frame.height=256;frame.hdr=index!=8;frame.sdr_white=index==5 || index==7?480:203;
     if(!frame.hdr) frame.sdr_white=80;

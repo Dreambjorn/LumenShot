@@ -1,4 +1,5 @@
 #pragma once
+#include "image/hdr_analysis.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -30,6 +31,7 @@ enum class DiagnosticSource { Live, Imported, Synthetic };
 enum class DiagnosticBackend { Unknown, Windows, Desktop };
 struct DiagnosticDuration { unsigned calls=0,failures=0;double sum_ms=0,max_ms=0; };
 struct DiagnosticFrame { unsigned width,height;bool hdr;double sdr_white;unsigned pixel_format;DiagnosticBackend backend; };
+struct DiagnosticPeak { unsigned x,y,width,height;HdrPeakMeasurement measurement; };
 struct DiagnosticIssue { DiagnosticStage stage;std::uint32_t hresult; };
 struct DiagnosticSnapshot {
     DiagnosticSource source=DiagnosticSource::Live;
@@ -40,6 +42,7 @@ struct DiagnosticSnapshot {
     std::array<unsigned,std::size_t(DiagnosticCounter::Count)> counters{};
     std::vector<DiagnosticFrame> frames;
     std::vector<DiagnosticIssue> issues;
+    std::vector<DiagnosticPeak> peaks;
 };
 
 class DiagnosticRecord {
@@ -74,6 +77,13 @@ public:
             if(data_.frames.size()==64) {++data_.dropped;return;}
             if(!std::isfinite(value.sdr_white) || value.sdr_white<0) value.sdr_white=0;
             data_.frames.push_back(value);
+        } catch(...) {}
+    }
+    void peak(DiagnosticPeak value) noexcept {
+        try {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if(data_.peaks.size()==64) {++data_.dropped;return;}
+            data_.peaks.push_back(value);
         } catch(...) {}
     }
     void issue(DiagnosticStage stage,std::uint32_t code) noexcept {
@@ -167,6 +177,15 @@ inline std::string diagnostic_json(const DiagnosticSnapshot& value) {
         const char* backend=frame.backend==DiagnosticBackend::Windows?"windows":frame.backend==DiagnosticBackend::Desktop?"desktop":"unknown";
         out<<"{\"width\":"<<frame.width<<",\"height\":"<<frame.height<<",\"hdr\":"<<(frame.hdr?"true":"false")
            <<",\"sdr_white_nits\":"<<frame.sdr_white<<",\"dxgi_format\":"<<frame.pixel_format<<",\"backend\":\""<<backend<<"\"}";
+    }
+    out<<"],\"peaks\":[";
+    for(std::size_t i=0;i<value.peaks.size();++i) {
+        const auto& region=value.peaks[i];const auto& peak=region.measurement;if(i) out<<',';
+        out<<"{\"x\":"<<region.x<<",\"y\":"<<region.y<<",\"width\":"<<region.width<<",\"height\":"<<region.height
+           <<",\"metric\":\"rec2020_max_channel_nits\",\"observed_nits\":"<<peak.observed_nits<<",\"effective_nits\":"<<peak.effective_nits
+           <<",\"percentile_nits\":"<<peak.percentile_nits<<",\"reference_white_nits\":"<<peak.reference_white
+           <<",\"samples\":"<<peak.samples<<",\"hdr_samples\":"<<peak.hdr_samples
+           <<",\"sample_step\":"<<peak.sample_step<<",\"percentile_per_mille\":"<<peak.percentile_per_mille<<",\"reason\":\""<<peak_reason_name(peak.reason)<<"\"}";
     }
     out<<"],\"issues\":[";
     for(std::size_t i=0;i<value.issues.size();++i) {

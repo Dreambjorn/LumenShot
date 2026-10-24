@@ -21,6 +21,7 @@ Settings load_settings() {
     };
     settings.backend=CaptureBackend(std::min(value(L"Backend",0),2u));
     settings.color.mode=ContentMode(std::min(value(L"Content",0),2u));
+    settings.color.peak_method=PeakMethod(std::min(value(L"PeakMethod",unsigned(settings.color.peak_method)),1u));
     try { settings.color.paper_white=std::stod(ini_string(L"PaperWhite",L"203")); }
     catch (...) { settings.color.paper_white=203; }
     try { settings.color.exposure=std::stod(ini_string(L"Exposure",L"0")); }
@@ -47,6 +48,7 @@ void save_settings(const Settings& settings) {
     write(L"Folder",settings.folder.wstring());write(L"Monitor",settings.monitor);
     write(L"Backend",std::to_wstring(int(settings.backend)));
     write(L"Content",std::to_wstring(int(settings.color.mode)));
+    write(L"PeakMethod",std::to_wstring(int(settings.color.peak_method)));
     write(L"PaperWhite",std::to_wstring(settings.color.paper_white));
     write(L"Exposure",std::to_wstring(settings.color.exposure));
     write(L"Sharpness",std::to_wstring(settings.sharpness));
