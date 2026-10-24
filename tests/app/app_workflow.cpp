@@ -4,6 +4,35 @@
 
 using namespace hdrshot;
 
+Image privacy_output_pixels(const std::filesystem::path& path) {
+    auto factory=imaging_factory();ComPtr<IWICBitmapDecoder> decoder;ComPtr<IWICBitmapFrameDecode> frame;
+    check(factory->CreateDecoderFromFilename(path.c_str(),nullptr,GENERIC_READ,WICDecodeMetadataCacheOnLoad,&decoder),"Cannot reopen privacy output");
+    check(decoder->GetFrame(0,&frame),"Cannot read privacy output");ComPtr<IWICFormatConverter> converter;
+    check(factory->CreateFormatConverter(&converter),"Cannot create privacy output converter");
+    check(converter->Initialize(frame.Get(),GUID_WICPixelFormat32bppBGRA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom),"Cannot read privacy output channels");
+    Image image;check(frame->GetSize(&image.width,&image.height),"Cannot read privacy output dimensions");image.bgra.resize(checked_pixels(image.width,image.height)*4);
+    check(converter->CopyPixels(nullptr,image.width*4,UINT(image.bgra.size()),image.bgra.data()),"Cannot decode privacy output");return image;
+}
+Frame privacy_output_hdr(const std::filesystem::path& path) {
+    if(path.extension()==L".jxr") return load_master(path);
+    std::ifstream input(path,std::ios::binary);std::string bytes((std::istreambuf_iterator<char>(input)),{});
+    uhdr_codec_private_t* decoder=uhdr_create_decoder();if(!decoder) throw std::runtime_error("Cannot create privacy HDR decoder.");
+    struct Release {uhdr_codec_private_t* value;~Release(){uhdr_release_decoder(value);}} release{decoder};
+    uhdr_compressed_image_t compressed{};compressed.data=bytes.data();compressed.data_sz=compressed.capacity=bytes.size();
+    check_hdr_codec(uhdr_dec_set_image(decoder,&compressed),"Cannot reopen privacy HDR JPEG");
+    check_hdr_codec(uhdr_dec_set_out_img_format(decoder,UHDR_IMG_FMT_64bppRGBAHalfFloat),"Cannot select privacy HDR pixels");
+    check_hdr_codec(uhdr_dec_set_out_color_transfer(decoder,UHDR_CT_LINEAR),"Cannot select privacy HDR transfer");
+    check_hdr_codec(uhdr_dec_set_out_max_display_boost(decoder,10000.0f/203),"Cannot select privacy HDR headroom");
+    check_hdr_codec(uhdr_decode(decoder),"Cannot reconstruct privacy HDR JPEG");const auto* decoded=uhdr_get_decoded_image(decoder);
+    if(!decoded) throw std::runtime_error("Privacy HDR JPEG lost its pixels.");
+    Frame frame;frame.width=decoded->w;frame.height=decoded->h;frame.hdr=true;frame.pixels.resize(checked_pixels(frame.width,frame.height));
+    const auto* pixels=static_cast<const std::uint16_t*>(decoded->planes[0]);
+    for(unsigned y=0;y<frame.height;++y) for(unsigned x=0;x<frame.width;++x) {
+        const auto i=(std::size_t(y)*decoded->stride[0]+x)*4;
+        frame.pixels[std::size_t(y)*frame.width+x]={half_to_float(pixels[i]),half_to_float(pixels[i+1]),half_to_float(pixels[i+2]),1};
+    }
+    return frame;
+}
 int wmain(int argc,wchar_t** argv) try {
     if(argc!=2) throw std::runtime_error("Specify an owned application evidence directory.");
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -233,6 +262,88 @@ int wmain(int argc,wchar_t** argv) try {
     if(copied.clipboard.bgra!=copy_image.bgra || copied.clipboard.width!=600 || copied.clipboard.height!=375 ||
        copied.details.find(L"Sharpness: 35%")==std::wstring::npos || copied.details.find(L"Image size: 150%")==std::wstring::npos)
         throw std::runtime_error("Clipboard output lost enhancements or its saved settings.");
+    unsigned privacy_exports=0;
+    for(const auto format:{HdrFormat::UltraJpeg,HdrFormat::JpegXr}) for(const unsigned scale:{100u,125u})
+        for(const auto tool:{MarkTool::Redact,MarkTool::Blur,MarkTool::Pixelate}) {
+            std::string first_png,first_hdr;
+            for(unsigned variant=0;variant<(tool==MarkTool::Redact?2u:1u);++variant) {
+                const auto suffix=std::to_wstring(int(format))+L"-"+std::to_wstring(scale)+L"-"+std::to_wstring(int(tool))+L"-"+std::to_wstring(variant);
+                app.settings.folder=directory/(L"privacy-"+suffix);app.settings.hdr_format=format;
+                app.settings.scale=scale;app.settings.sharpness=35;app.settings.keep_original=true;
+                app.settings.color.peak_nits=4000;app.capture_settings=app.settings;
+                Frame private_frame=frame;
+                for(unsigned y=150;y<=220;++y) for(unsigned x=150;x<=300;++x) {
+                    const float value=(((x/3+y/3)%2)^variant)?3.0f:.25f;
+                    private_frame.pixels[y*900+x]={value,value*.8f,value*.6f,1};
+                }
+                const auto frozen=private_frame.pixels;
+                auto unedited=crop_frame(private_frame,selection);enhance_hdr(unedited,scale,35);
+                app.busy=true;app.worker.start([&] {
+                    app.result={};app.result.frame=private_frame;prepare_preview(app.result,app.capture_settings);
+                    app.result.bounds={80,80,980,680};app.result.needs_selection=true;PostMessageW(window,done_message,0,0);
+                });
+                NativeWork privacy_driver;privacy_driver.start([tool] {
+                    HWND target=nullptr;
+                    for(int i=0;i<800 && !target;++i) {
+                        target=FindWindowW(L"LumenShotRegionSelector",nullptr);DWORD pid=0;if(target) GetWindowThreadProcessId(target,&pid);
+                        if(target && pid!=GetCurrentProcessId()) target=nullptr;
+                        if(!target) Sleep(10);
+                    }
+                    if(!target) return;
+                    const auto click=[&](int x,int y) {
+                        PostMessageW(target,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(x,y));PostMessageW(target,WM_LBUTTONUP,0,MAKELPARAM(x,y));
+                    };
+                    const auto drag=[&](int x,int y,int right,int bottom) {
+                        PostMessageW(target,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(x,y));PostMessageW(target,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(right,bottom));
+                        PostMessageW(target,WM_LBUTTONUP,0,MAKELPARAM(right,bottom));
+                    };
+                    drag(100,100,500,350);click(525,120+(8+int(tool)-int(MarkTool::Redact))*32);drag(150,150,300,220);click(433,376);
+                });
+                const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(15);
+                while(app.busy && std::chrono::steady_clock::now()<deadline) {
+                    MSG message{};while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)) {TranslateMessage(&message);DispatchMessageW(&message);}
+                    Sleep(10);
+                }
+                privacy_driver.join();
+                if(app.busy || !app.result.success || app.result.details.find(L"could not be saved")!=std::wstring::npos)
+                    throw std::runtime_error("Privacy selection export failed: "+narrow(app.result.details));
+                if(std::memcmp(private_frame.pixels.data(),frozen.data(),frozen.size()*sizeof(Pixel)))
+                    throw std::runtime_error("Privacy export modified the captured HDR source.");
+                std::filesystem::path png,hdr;
+                for(const auto& entry:std::filesystem::directory_iterator(app.settings.folder)) if(entry.path().extension()==L".png") png=entry.path();
+                unsigned hdr_files=0;
+                for(const auto& entry:std::filesystem::directory_iterator(app.settings.folder/L"HDR images")) {hdr=entry.path();++hdr_files;}
+                if(png.empty() || hdr_files!=1) throw std::runtime_error("Privacy export retained an extra unredacted HDR artifact.");
+                const auto sdr=privacy_output_pixels(png);const auto linear=privacy_output_hdr(hdr);
+                if(sdr.width!=unedited.width || sdr.height!=unedited.height || linear.width!=sdr.width || linear.height!=sdr.height)
+                    throw std::runtime_error("Privacy export changed crop or scaled dimensions.");
+                const auto fallback=format==HdrFormat::UltraJpeg?privacy_output_pixels(hdr):sdr;
+                const unsigned left=unsigned(std::ceil(58.0*sdr.width/400)),right=unsigned(std::floor(193.0*sdr.width/400));
+                const unsigned top=unsigned(std::ceil(58.0*sdr.height/250)),bottom=unsigned(std::floor(113.0*sdr.height/250));
+                double changed=0;
+                for(unsigned y=top;y<bottom;++y) for(unsigned x=left;x<right;++x) {
+                    const auto i=std::size_t(y)*sdr.width+x;const auto& p=linear.pixels[i];
+                    if(tool==MarkTool::Redact) {
+                        if(sdr.bgra[i*4] || sdr.bgra[i*4+1] || sdr.bgra[i*4+2]
+                           || fallback.bgra[i*4]>3 || fallback.bgra[i*4+1]>3 || fallback.bgra[i*4+2]>3
+                           || std::abs(p.r)>.001 || std::abs(p.g)>.001 || std::abs(p.b)>.001)
+                            throw std::runtime_error("Reopened PNG, HDR fallback, or HDR master exposed redacted pixels.");
+                    } else {
+                        const auto q=unedited.pixels[i];
+                        const auto expected=format==HdrFormat::UltraJpeg?to_bt2020({q.r,q.g,q.b})*(80.0/203):Rgb{q.r,q.g,q.b};
+                        changed=std::max(changed,std::abs(p.r-expected.r)+std::abs(p.g-expected.g)+std::abs(p.b-expected.b));
+                    }
+                }
+                if(tool!=MarkTool::Redact && changed<.1) throw std::runtime_error("HDR export omitted its blur or pixelation.");
+                if(tool==MarkTool::Redact) {
+                    if(!variant) {first_png=file_bytes(png);first_hdr=file_bytes(hdr);}
+                    else if(file_bytes(png)!=first_png || file_bytes(hdr)!=first_hdr)
+                        throw std::runtime_error("Encoded output depends on covered secrets after sharpening or scaling.");
+                }
+                ++privacy_exports;
+            }
+        }
+    std::cout<<privacy_exports<<" privacy workflows passed: native tools, immutable captures, scaled/sharpened PNG, HDR JPEG fallback/reconstruction, and JPEG XR; covered-secret variants encode identically.\n";
     app.settings.folder=future_folder;
     app.busy=true;app.preparing=true;app.listen_for_escape();
     app.worker.start([&] {

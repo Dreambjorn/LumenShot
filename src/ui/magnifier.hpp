@@ -12,15 +12,16 @@ inline RECT magnifier_rect(RECT area,POINT pointer,SIZE size) {
     const LONG y=std::clamp(pointer.y+gap,area.top+margin,area.bottom-margin-size.cy);
     return {x,y,x+size.cx,y+size.cy};
 }
-inline void draw_magnifier(HDC dc,const Image& image,POINT pointer,RECT bounds,int cell,const std::wstring& label,HFONT font) {
+inline void draw_magnifier(HDC dc,const Image& image,POINT pointer,RECT bounds,int cell,const std::wstring& label,HFONT font,const std::uint8_t* source=nullptr) {
     if(bounds.right<=bounds.left || bounds.bottom<=bounds.top) return;
     constexpr int count=11,radius=count/2;
     std::array<std::uint32_t,count*count> pixels{};
-    // Read frozen source pixels so the grid never magnifies its own overlay.
+    // Read the frozen image or its edited surface without sampling the HUD.
+    if(!source) source=image.bgra.data();
     for(int y=0;y<count;++y) for(int x=0;x<count;++x) {
         const LONG sx=std::clamp(pointer.x+x-radius,0l,LONG(image.width)-1);
         const LONG sy=std::clamp(pointer.y+y-radius,0l,LONG(image.height)-1);
-        std::memcpy(&pixels[y*count+x],image.bgra.data()+(std::size_t(sy)*image.width+sx)*4,4);
+        std::memcpy(&pixels[y*count+x],source+(std::size_t(sy)*image.width+sx)*4,4);
     }
     const int saved=SaveDC(dc),grid=count*cell;
     const LONG left=bounds.left+(bounds.right-bounds.left-grid)/2,top=bounds.top+6;

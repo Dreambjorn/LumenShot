@@ -2,6 +2,7 @@
 #include "image/color.hpp"
 #include "ui/window_snap.hpp"
 #include "ui/magnifier.hpp"
+#include "image/privacy.hpp"
 #include <commdlg.h>
 #include <windowsx.h>
 #include <initializer_list>
@@ -11,7 +12,7 @@
 
 namespace hdrshot {
 
-enum class MarkTool { Select, Pen, Line, Arrow, Rectangle, Marker, Text };
+enum class MarkTool { Select, Pen, Line, Arrow, Rectangle, Marker, Text, Redact, Blur, Pixelate };
 struct Annotation {
     MarkTool tool = MarkTool::Pen;
     COLORREF color = RGB(255,0,0);
@@ -81,8 +82,50 @@ inline Image crop_image(const Image& source,RECT rect) {
             source.bgra.data()+(std::size_t(y+rect.top)*source.width+rect.left)*4,result.width*4);
     return result;
 }
+inline bool privacy_tool(MarkTool tool) {return tool>=MarkTool::Redact && tool<=MarkTool::Pixelate;}
+inline RECT privacy_rect(const Annotation& mark,POINT offset={},double scale_x=1,double scale_y=1) {
+    if(mark.points.empty()) return {};
+    const RECT rect=normalize_rect(mark.points.front(),mark.points.back());
+    // Cover whole source pixels even when a crop is scaled by a fractional factor.
+    return {LONG(std::floor((rect.left-offset.x)*scale_x)),LONG(std::floor((rect.top-offset.y)*scale_y)),
+            LONG(std::ceil((double(rect.right)-offset.x+1)*scale_x)),LONG(std::ceil((double(rect.bottom)-offset.y+1)*scale_y))};
+}
+inline PrivacyEffect privacy_effect(MarkTool tool) {return static_cast<PrivacyEffect>(int(tool)-int(MarkTool::Redact));}
+inline unsigned privacy_amount(MarkTool tool,double scale_x=1,double scale_y=1) {
+    return unsigned(std::max(1l,std::lround((tool==MarkTool::Blur?8:12)*(scale_x+scale_y)*.5)));
+}
+template<class Pixels>
+void apply_privacy_marks(Pixels& pixels,const std::vector<Annotation>& marks,POINT offset={},
+                         double scale_x=1,double scale_y=1,bool redact_only=false) {
+    for(const auto& mark:marks) if(privacy_tool(mark.tool) && (!redact_only || mark.tool==MarkTool::Redact))
+        apply_privacy(pixels,privacy_rect(mark,offset,scale_x,scale_y),privacy_effect(mark.tool),privacy_amount(mark.tool,scale_x,scale_y));
+}
+inline void draw_privacy(HDC dc,const Annotation& mark,POINT offset,double scale_x,double scale_y) {
+    RECT clip{},rect{};
+    if(GetClipBox(dc,&clip)==ERROR) throw std::runtime_error("Cannot read privacy drawing bounds.");
+    const auto requested=privacy_rect(mark,offset,scale_x,scale_y);
+    if(!IntersectRect(&rect,&clip,&requested)) return;
+    if(mark.tool==MarkTool::Redact) {
+        if(!FillRect(dc,&rect,static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)))) throw std::runtime_error("Cannot draw opaque redaction.");
+        return;
+    }
+    const unsigned width=unsigned(rect.right-rect.left),height=unsigned(rect.bottom-rect.top);
+    BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth=LONG(width);info.bmiHeader.biHeight=-LONG(height);info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;
+    void* pixels=nullptr;HDC memory=CreateCompatibleDC(dc);
+    HBITMAP bitmap=memory?CreateDIBSection(memory,&info,DIB_RGB_COLORS,&pixels,nullptr,0):nullptr;
+    if(!bitmap) {if(memory) DeleteDC(memory);throw std::runtime_error("Cannot draw privacy effect.");}
+    HGDIOBJ old=SelectObject(memory,bitmap);
+    struct Release {HDC dc;HBITMAP bitmap;HGDIOBJ old;~Release(){SelectObject(dc,old);DeleteObject(bitmap);DeleteDC(dc);}} release{memory,bitmap,old};
+    if(!BitBlt(memory,0,0,int(width),int(height),dc,rect.left,rect.top,SRCCOPY)) throw std::runtime_error("Cannot read privacy effect pixels.");
+    GdiFlush();
+    privacy_bgra(static_cast<std::uint8_t*>(pixels),width,height,{0,0,LONG(width),LONG(height)},
+                 privacy_effect(mark.tool),privacy_amount(mark.tool,scale_x,scale_y));
+    if(!BitBlt(dc,rect.left,rect.top,int(width),int(height),memory,0,0,SRCCOPY)) throw std::runtime_error("Cannot draw privacy effect pixels.");
+}
 inline void draw_annotation(HDC dc,const Annotation& mark,POINT offset={},double scale_x=1,double scale_y=1) {
     if(mark.points.empty()) return;
+    if(privacy_tool(mark.tool)) {draw_privacy(dc,mark,offset,scale_x,scale_y);return;}
     const auto point=[&](std::size_t i) {
         return POINT{LONG(std::lround((mark.points[i].x-offset.x)*scale_x)),LONG(std::lround((mark.points[i].y-offset.y)*scale_y))};
     };
@@ -201,7 +244,9 @@ class RegionSelector {
     static constexpr wchar_t class_name[]=L"LumenShotRegionSelector";
     HWND window_=nullptr,edit_=nullptr;
     Image image_;
-    SelectionSurface original_,dimmed_,buffer_;
+    SelectionSurface original_,dimmed_,buffer_,edited_;
+    bool edited_dirty_=true;
+    static constexpr int vertical_buttons=11,toolbar_buttons=14;
     RECT last_visual_{};
     RECT selection_{},drag_start_{},snap_hover_{},snap_pending_{};
     std::vector<RECT> snap_windows_;
@@ -238,8 +283,8 @@ class RegionSelector {
         // A virtual desktop can contain gaps where no toolbar is visible.
         const LONG preferred=selection_.right+43<=area.right?selection_.right+7:selection_.left-43;
         const LONG x=std::clamp(preferred,area.left,std::max(area.left,area.right-36));
-        const LONG y=std::clamp(selection_.top,area.top,std::max(area.top,area.bottom-8*32-8));
-        vertical_={x,y,x+36,y+8*32+8};
+        const LONG y=std::clamp(selection_.top,area.top,std::max(area.top,area.bottom-vertical_buttons*32-8));
+        vertical_={x,y,x+36,y+vertical_buttons*32+8};
         const LONG bx=std::clamp(selection_.right-3*42-8,area.left,std::max(area.left,area.right-3*42-8));
         const LONG below=selection_.bottom+45<=area.bottom?selection_.bottom+7:selection_.top-45;
         const LONG by=std::clamp(below,area.top,std::max(area.top,area.bottom-38));
@@ -252,7 +297,7 @@ class RegionSelector {
             const BOOL measured=GetTextExtentPoint32W(dc,hint_.c_str(),int(hint_.size()),&size);
             SelectObject(dc,old);ReleaseDC(window_,dc);
             if(!measured) throw std::runtime_error("Cannot measure selection tooltip.");
-            hint_bounds_=tooltip_rect(area,button_bounds(hover_),{size.cx+16,size.cy+10},hover_<8);
+            hint_bounds_=tooltip_rect(area,button_bounds(hover_),{size.cx+16,size.cy+10},hover_<8 || hover_>=11);
         }
     }
     bool update_pointer(POINT point) {
@@ -293,13 +338,18 @@ class RegionSelector {
         last_visual_=visual_bounds();
     }
     RECT button_bounds(int index) const {
-        if(index<8) return {vertical_.left+3,vertical_.top+4+index*32,vertical_.right-3,vertical_.top+4+(index+1)*32};
+        if(index<8 || index>=11) {
+            const int slot=index>=11?index-3:index;
+            return {vertical_.left+3,vertical_.top+4+slot*32,vertical_.right-3,vertical_.top+4+(slot+1)*32};
+        }
         const int i=index-8;
         return {horizontal_.left+4+i*42,horizontal_.top+3,horizontal_.left+4+(i+1)*42,horizontal_.bottom-3};
     }
     int hit_button(POINT p) const {
         if(!valid_rect(selection_)) return -1;
-        if(PtInRect(&vertical_,p)) return std::clamp(int((p.y-vertical_.top-4)/32),0,7);
+        if(PtInRect(&vertical_,p)) {
+            const int slot=std::clamp(int((p.y-vertical_.top-4)/32),0,vertical_buttons-1);return slot<8?slot:slot+3;
+        }
         if(PtInRect(&horizontal_,p)) return 8+std::clamp(int((p.x-horizontal_.left-4)/42),0,2);
         return -1;
     }
@@ -331,6 +381,7 @@ class RegionSelector {
     }
     void invalidate() {
         if(!window_ || finished_) return;
+        edited_dirty_=true;
         const RECT previous=last_visual_;
         if(!drag_) layout();
         layout_magnifier();
@@ -362,6 +413,7 @@ class RegionSelector {
     void button(int index) {
         commit_text();
         if(index<=5) tool_=static_cast<MarkTool>(index+1);
+        else if(index>=11) tool_=static_cast<MarkTool>(int(MarkTool::Redact)+index-11);
         else if(index==6) {
             static COLORREF custom[16]{};
             CHOOSECOLORW dialog{};dialog.lStructSize=sizeof(dialog);dialog.hwndOwner=window_;
@@ -437,7 +489,8 @@ class RegionSelector {
             snap_hover_=valid_rect(selection_)?RECT{}:window_snap_at(snap_windows_,p);
             hover_=hit_button(p);
             static const wchar_t* names[]={L"Pencil",L"Line",L"Arrow",L"Rectangle",L"Marker",L"Text",
-                L"Color",L"Undo (Ctrl+Z)",L"Copy (Ctrl+C)",L"Save (Ctrl+S)",L"Cancel (Esc)"};
+                L"Color",L"Undo (Ctrl+Z)",L"Copy (Ctrl+C)",L"Save (Ctrl+S)",L"Cancel (Esc)",
+                L"Redact (R) - opaque",L"Blur (B) - use Redact for secrets",L"Pixelate (P) - use Redact for secrets"};
             hint_=hover_>=0?names[hover_]:L"";
             const int handle=hit_handle(p);
             LPCWSTR cursor=IDC_CROSS;
@@ -479,6 +532,9 @@ class RegionSelector {
         if(ctrl && key=='Z') {commit_text(true);if(!marks_.empty()) marks_.pop_back();invalidate();return;}
         if(ctrl && key=='A') {commit_text();selection_={0,0,LONG(image_.width),LONG(image_.height)};invalidate();return;}
         if(key=='V') {tool_=MarkTool::Select;invalidate();return;}
+        if(!ctrl && valid_rect(selection_) && (key=='R' || key=='B' || key=='P')) {
+            commit_text();tool_=key=='R'?MarkTool::Redact:key=='B'?MarkTool::Blur:MarkTool::Pixelate;invalidate();return;
+        }
         if(!valid_rect(selection_) || (key<VK_LEFT || key>VK_DOWN)) return;
         commit_text();
         const LONG dx=key==VK_LEFT?-1:key==VK_RIGHT?1:0,dy=key==VK_UP?-1:key==VK_DOWN?1:0;
@@ -499,7 +555,7 @@ class RegionSelector {
     // GDI strokes are aliased, so icons are drawn four times larger and averaged into coverage.
     static const std::vector<std::uint8_t>& icon_mask(int index) {
         constexpr int size=24,scale=4,canvas=size*scale;
-        static std::vector<std::uint8_t> masks[11];
+        static std::vector<std::uint8_t> masks[toolbar_buttons];
         auto& mask=masks[index];
         if(!mask.empty()) return mask;
         BITMAPINFO info{};
@@ -544,6 +600,11 @@ class RegionSelector {
             shape({{-8,-8},{5,-8},{8,-5},{8,8},{-8,8}},hollow);
             box(-4.5,-8,3.5,-3,white);box(-5,1,5,8,hollow);
         } else if(index==10) {line(-6,-6,6,6);line(6,-6,-6,6);}
+        else if(index==11) {box(-8,-5,8,5,white);line(-8,-8,8,-8);line(-8,8,8,8);}
+        else if(index==12) {for(int x=-7;x<=7;x+=3) line(x,-6,x,6);line(-9,0,9,0);}
+        else if(index==13) {
+            for(int y=-6;y<=6;y+=6) for(int x=-6;x<=6;x+=6) box(x-2,y-2,x+2,y+2,(x+y)%12?white:hollow);
+        }
         GdiFlush();
         mask.resize(size*size);
         const auto* pixels=static_cast<const std::uint8_t*>(bits);
@@ -574,10 +635,10 @@ class RegionSelector {
         const COLORREF face=RGB(244,244,244),hover=RGB(222,226,232),pressed=RGB(204,212,224),ink=RGB(51,51,51);
         HBRUSH face_brush=CreateSolidBrush(face),edge=CreateSolidBrush(RGB(150,150,150));
         FillRect(dc,&bounds,face_brush);FrameRect(dc,&bounds,edge);
-        for(int i=0;i<(vertical?8:3);++i) {
-            const int index=vertical?i:i+8;
+        for(int i=0;i<(vertical?vertical_buttons:3);++i) {
+            const int index=vertical?(i<8?i:i+3):i+8;
             RECT r=button_bounds(index);
-            const bool active=vertical && i<6 && int(tool_)==i+1;
+            const bool active=vertical && ((i<6 && int(tool_)==i+1) || (i>=8 && int(tool_)==int(MarkTool::Redact)+i-8));
             const COLORREF background=active?pressed:index==hover_?hover:face;
             if(background!=face) {
                 HBRUSH fill=CreateSolidBrush(background);
@@ -654,6 +715,7 @@ public:
                        original_.dc(),visible.left,visible.top,SRCCOPY);
             HBRUSH outline=CreateSolidBrush(RGB(100,190,255));FrameRect(dc,&snap_hover_,outline);DeleteObject(outline);
         }
+        bool privacy=false;
         if(valid_rect(selection_)) {
             const int saved=SaveDC(dc);
             IntersectClipRect(dc,selection_.left,selection_.top,selection_.right,selection_.bottom);
@@ -662,8 +724,23 @@ public:
                 BitBlt(dc,visible.left,visible.top,visible.right-visible.left,visible.bottom-visible.top,
                        original_.dc(),visible.left,visible.top,SRCCOPY);
             const POINT offset=drag_==2?POINT{drag_start_.left-selection_.left,drag_start_.top-selection_.top}:POINT{};
-            for(const auto& mark:marks_) draw_annotation(dc,mark,offset);
-            if(drag_==4) draw_annotation(dc,current_);
+            privacy=std::any_of(marks_.begin(),marks_.end(),[](const Annotation& mark){return privacy_tool(mark.tool);})
+                               || (drag_==4 && privacy_tool(current_.tool));
+            if(privacy) {
+                edited_.create(target,image_.width,image_.height);
+                if(edited_dirty_) {
+                    const HDC edited=edited_.dc();BitBlt(edited,0,0,int(image_.width),int(image_.height),original_.dc(),0,0,SRCCOPY);
+                    const int state=SaveDC(edited);IntersectClipRect(edited,selection_.left,selection_.top,selection_.right,selection_.bottom);
+                    for(const auto& mark:marks_) draw_annotation(edited,mark,offset);
+                    if(drag_==4) draw_annotation(edited,current_);
+                    RestoreDC(edited,state);GdiFlush();edited_dirty_=false;
+                }
+                if(valid_rect(visible)) BitBlt(dc,visible.left,visible.top,visible.right-visible.left,visible.bottom-visible.top,
+                                             edited_.dc(),visible.left,visible.top,SRCCOPY);
+            } else {
+                for(const auto& mark:marks_) draw_annotation(dc,mark,offset);
+                if(drag_==4) draw_annotation(dc,current_);
+            }
             RestoreDC(dc,saved);
             HPEN pen=CreatePen(PS_DOT,1,RGB(255,255,255));
             HGDIOBJ old_pen=SelectObject(dc,pen),old_brush=SelectObject(dc,GetStockObject(HOLLOW_BRUSH));
@@ -687,7 +764,7 @@ public:
             SelectObject(dc,font_);SetTextColor(dc,RGB(255,255,255));SetBkMode(dc,TRANSPARENT);
             DrawTextW(dc,hint_.c_str(),int(hint_.size()),&label,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
         }
-        draw_magnifier(dc,image_,pointer_,magnifier_,magnifier_cell_,magnifier_label_,font_);
+        draw_magnifier(dc,image_,pointer_,magnifier_,magnifier_cell_,magnifier_label_,font_,privacy?edited_.pixels():nullptr);
         RestoreDC(dc,state);
         BitBlt(target,dirty.left,dirty.top,width,height,dc,dirty.left,dirty.top,SRCCOPY);
         last_visual_=visual_bounds();
@@ -731,7 +808,7 @@ public:
     }
     const Image& image() const { return image_; }
     void preview_selection(RECT rect,std::vector<Annotation> marks={}) {
-        selection_=rect;marks_=std::move(marks);layout();last_visual_=visual_bounds();
+        selection_=rect;marks_=std::move(marks);edited_dirty_=true;layout();last_visual_=visual_bounds();
     }
 };
 

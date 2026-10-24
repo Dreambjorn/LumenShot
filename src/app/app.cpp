@@ -125,6 +125,10 @@ void App::finish_work() {
             worker.start([this,snapshot,selected,margin,cropped=std::move(cropped),converted=std::move(converted)]() mutable {
                 try {
                     Runtime runtime;
+                    const POINT origin{selected.rect.left,selected.rect.top};
+                    // Remove secrets before resampling or sharpening can spread them into neighbouring pixels.
+                    apply_privacy_marks(converted,selected.marks,{margin.left,margin.top},1,1,true);
+                    if(snapshot.keep_original && cropped.hdr) apply_privacy_marks(cropped,selected.marks,origin,1,1,true);
                     if(snapshot.scale!=100) scale_image(converted,snapshot.scale,snapshot.sharpness);
                     else if(snapshot.sharpness) {
                         sharpen_image(converted,snapshot.sharpness);
@@ -132,12 +136,16 @@ void App::finish_work() {
                                                         selected.rect.right-margin.left,selected.rect.bottom-margin.top});
                     }
                     if(snapshot.keep_original && cropped.hdr) enhance_hdr(cropped,snapshot.scale,snapshot.sharpness);
+                    const double scale_x=double(converted.width)/(selected.rect.right-selected.rect.left);
+                    const double scale_y=double(converted.height)/(selected.rect.bottom-selected.rect.top);
                     Image hdr_base;
-                    if(snapshot.keep_original && cropped.hdr && snapshot.hdr_format==HdrFormat::UltraJpeg && !selected.marks.empty())
-                        hdr_base=converted;
-                    annotate(converted,selected.marks,{selected.rect.left,selected.rect.top},
-                             double(converted.width)/(selected.rect.right-selected.rect.left),
-                             double(converted.height)/(selected.rect.bottom-selected.rect.top));
+                    if(snapshot.keep_original && cropped.hdr) {
+                        apply_privacy_marks(cropped,selected.marks,origin,scale_x,scale_y);
+                        if(snapshot.hdr_format==HdrFormat::UltraJpeg && !selected.marks.empty()) {
+                            hdr_base=converted;apply_privacy_marks(hdr_base,selected.marks,origin,scale_x,scale_y);
+                        }
+                    }
+                    annotate(converted,selected.marks,origin,scale_x,scale_y);
                     result=process_output(snapshot,cropped,converted,{},selected.action==SelectionAction::Copy,
                                           hdr_base.bgra.empty()?nullptr:&hdr_base);
                 }

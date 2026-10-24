@@ -159,9 +159,10 @@ void check_tooltips(HWND window,POINT vertical,POINT horizontal,bool right_edge,
     SendMessageW(window,WM_MOUSELEAVE,0,0);const auto outside=selector_window_image(window);
     SendMessageW(window,WM_MOUSEMOVE,0,MAKELPARAM(30,500));
     const auto baseline=selector_window_image(window);auto previous=baseline;
-    for(int index=0;index<11;++index) {
-        const POINT point=index<8?POINT{vertical.x,vertical.y+index*32}:POINT{horizontal.x+(index-8)*42,horizontal.y};
-        const RECT button=index<8?RECT{point.x-15,point.y-16,point.x+15,point.y+16}
+    for(int index=0;index<14;++index) {
+        const bool side=index<8 || index>=11;
+        const POINT point=side?POINT{vertical.x,vertical.y+(index>=11?index-3:index)*32}:POINT{horizontal.x+(index-8)*42,horizontal.y};
+        const RECT button=side?RECT{point.x-15,point.y-16,point.x+15,point.y+16}
                                   :RECT{point.x-21,point.y-16,point.x+21,point.y+16};
         SendMessageW(window,WM_MOUSEMOVE,0,MAKELPARAM(point.x,point.y));
         auto image=selector_window_image(window,previous);
@@ -179,7 +180,7 @@ void check_tooltips(HWND window,POINT vertical,POINT horizontal,bool right_edge,
         const LONG dx=std::max({0l,button.left-label.right,label.left-button.right});
         const LONG dy=std::max({0l,button.top-label.bottom,label.top-button.bottom});
         require(dx+dy>0 && dx+dy<=12,"Tooltip is detached from its button or covers the button");
-        if(index<8 && right_edge)require(label.right<button.left,"Right-edge tooltip did not flip beside its button");
+        if(side && right_edge)require(label.right<button.left,"Right-edge tooltip did not flip beside its button");
         unsigned ink=0;
         for(LONG y=label.top;y<label.bottom;++y)for(LONG x=label.left;x<label.right;++x) {
             const auto i=(std::size_t(y)*image.width+x)*4;
@@ -374,6 +375,63 @@ void drive_magnifier(const Image& source,bool selected,const std::filesystem::pa
     SetWindowLongPtrW(window,GWLP_WNDPROC,previous);
     if(probe.failure) {PostMessageW(window,WM_CLOSE,0,0);std::rethrow_exception(probe.failure);}
 }
+void check_privacy_input(HWND window,const std::filesystem::path& directory) {
+    const auto click=[&](LONG x,LONG y) {
+        SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(x,y));SendMessageW(window,WM_LBUTTONUP,0,MAKELPARAM(x,y));
+    };
+    const auto draw=[&](LONG x,LONG y,LONG right,LONG bottom) {
+        SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(x,y));
+        SendMessageW(window,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(right,bottom));
+        SendMessageW(window,WM_LBUTTONUP,0,MAKELPARAM(right,bottom));
+    };
+    click(525,376);draw(151,151,211,181);
+    auto previous=selector_window_image(window);
+    require(previous.bgra[(165*900+180)*4]==0 && previous.bgra[(165*900+180)*4+2]==0,"Redaction toolbar did not draw an opaque region");
+    SendMessageW(window,WM_KEYDOWN,'B',0);draw(231,151,291,181);
+    auto current=selector_window_image(window,previous);
+    require(current.bgra==selector_window_image(window).bgra,"Blur preview depended on repaint damage");previous=current;
+    click(525,440);draw(311,151,371,181);current=selector_window_image(window,previous);
+    require(current.bgra==selector_window_image(window).bgra,"Pixelation preview left stale repaint pixels");
+    save_image(directory/L"privacy-tools.png",current);
+    click(525,344);current=selector_window_image(window,current);
+    for(unsigned x=320;x<360;++x) {
+        const auto i=(165*900+x)*4;
+        require(current.bgra[i]==std::uint8_t((x+165)%100+120),"Undo did not restore pixelated source detail");
+    }
+    SendMessageW(window,WM_KEYDOWN,'P',0);draw(311,151,371,181);
+    SendMessageW(window,WM_KEYDOWN,'V',0);draw(450,300,465,310);
+    SendMessageW(window,WM_KEYDOWN,VK_RIGHT,0);current=selector_window_image(window);
+    require(current.bgra[(170*900+180)*4]==0 && current.bgra[(170*900+180)*4+2]==0,"Moving selection left its redaction behind");
+    SendMessageW(window,WM_MOUSEMOVE,0,MAKELPARAM(180,170));current=selector_window_image(window);
+    const RECT panel=magnifier_bounds(current);const int cell=MulDiv(8,GetDpiForWindow(window),96);
+    const LONG cx=panel.left+(panel.right-panel.left-11*cell)/2+5*cell+cell/2,cy=panel.top+6+5*cell+cell/2;
+    const auto pixel=(std::size_t(cy)*900+cx)*4;
+    require(current.bgra[pixel]==0 && current.bgra[pixel+1]==0 && current.bgra[pixel+2]==0,"Magnifier exposed original pixels beneath opaque redaction");
+    click(449,386);
+}
+constexpr UINT privacy_probe_message=WM_APP+20;
+struct PrivacyProbe {std::filesystem::path directory;std::exception_ptr failure;};
+LRESULT CALLBACK privacy_probe_proc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
+    if(message==privacy_probe_message) {
+        auto& probe=*reinterpret_cast<PrivacyProbe*>(lp);
+        try {check_privacy_input(window,probe.directory);} catch(...) {probe.failure=std::current_exception();}
+        return 0;
+    }
+    return CallWindowProcW(reinterpret_cast<WNDPROC>(GetClassLongPtrW(window,GCLP_WNDPROC)),window,message,wp,lp);
+}
+void drive_privacy(const std::filesystem::path& directory) {
+    HWND window=nullptr;
+    for(int i=0;i<500 && !window;++i) {
+        window=FindWindowW(L"LumenShotRegionSelector",nullptr);DWORD pid=0;if(window) GetWindowThreadProcessId(window,&pid);
+        if(window && (pid!=GetCurrentProcessId() || !IsWindowVisible(window))) window=nullptr;
+        if(!window) Sleep(10);
+    }
+    require(window!=nullptr,"Privacy selector did not open");PrivacyProbe probe{directory,{}};
+    const auto previous=SetWindowLongPtrW(window,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(privacy_probe_proc));
+    require(previous!=0,"Cannot attach owned privacy probe");
+    SendMessageW(window,privacy_probe_message,0,reinterpret_cast<LPARAM>(&probe));SetWindowLongPtrW(window,GWLP_WNDPROC,previous);
+    if(probe.failure) {PostMessageW(window,WM_CLOSE,0,0);std::rethrow_exception(probe.failure);}
+}
 constexpr UINT tooltip_probe_message=WM_APP+17;
 struct TooltipProbe {POINT vertical,horizontal;bool edge;std::filesystem::path directory;std::exception_ptr failure;};
 LRESULT CALLBACK tooltip_probe_proc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
@@ -566,6 +624,20 @@ int wmain(int argc,wchar_t** argv) try {
     for(unsigned y=0;y<600;++y) for(unsigned x=0;x<900;++x) {
         const auto i=(std::size_t(y)*900+x)*4;
         grid.bgra[i]=(x+y)%100+120;grid.bgra[i+1]=y%180+40;grid.bgra[i+2]=x%200+20;grid.bgra[i+3]=255;
+    }
+    {
+        RegionSelector selector(grid);selector.preview_selection({100,100,500,350});std::exception_ptr failure;NativeWork driver;
+        driver.start([&] {try {drive_privacy(directory);} catch(...) {failure=std::current_exception();
+            HWND target=FindWindowW(L"LumenShotRegionSelector",nullptr);DWORD pid=0;if(target) GetWindowThreadProcessId(target,&pid);
+            if(target && pid==GetCurrentProcessId()) PostMessageW(target,WM_CLOSE,0,0);
+        }});
+        const auto selected=selector.run(nullptr,{80,80,980,680});driver.join();if(failure) std::rethrow_exception(failure);
+        const RECT expected{116,110,516,360};
+        require(selected.action==SelectionAction::Save && EqualRect(&selected.rect,&expected),"Privacy tools disrupted crop movement or saving");
+        require(selected.marks.size()==3 && selected.marks[0].tool==MarkTool::Redact && selected.marks[1].tool==MarkTool::Blur
+                && selected.marks[2].tool==MarkTool::Pixelate,"Privacy buttons, shortcuts, or undo selected the wrong tools");
+        require(selected.marks[0].points.front().x==167 && selected.marks[0].points.front().y==161,"Privacy annotations lost physical crop coordinates");
+        require(selector.image().bgra==grid.bgra,"Privacy editor changed the frozen capture");
     }
     for(int direction=0;direction<4;++direction) {
         RegionSelector selector(grid);std::exception_ptr failure;NativeWork driver;
