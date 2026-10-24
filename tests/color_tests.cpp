@@ -60,6 +60,15 @@ int main() try {
         const auto hue_difference = std::remainder(std::atan2(a.b,a.a)-std::atan2(b.b,b.a),2*3.141592653589793);
         require(std::abs(hue_difference) < 1e-5,"Oklab hue changed during gamut compression");
     }
+    Frame overlay;overlay.width=2;overlay.height=1;overlay.hdr=true;
+    // Captured orange overlay and neutral white from a native HDR10 game frame.
+    overlay.pixels={{206.75f,-14.2421875f,-2.384765625f,1},{124.9375f,125,124.9375f,1}};
+    const auto converted_overlay=render_sdr(overlay,{ContentMode::Hdr,240,.1,false});
+    require(converted_overlay.bgra[2]==255 && converted_overlay.bgra[1]>=136
+            && converted_overlay.bgra[1]<=138 && converted_overlay.bgra[0]==0,
+            "Bright HDR orange was whitened during SDR conversion");
+    require(converted_overlay.bgra[4]==255 && converted_overlay.bgra[5]==255
+            && converted_overlay.bgra[6]==255,"Neutral HDR highlight gained a color cast");
     const std::array<std::pair<std::uint16_t,float>,8> halves = {{{0x0000,0},{0x3c00,1},{0x4000,2},
         {0xbc00,-1},{0x0001,0.000000059604644775390625f},{0x7bff,65504},{0x3800,.5f},{0x4900,10}}};
     for (const auto& [bits,value] : halves) {

@@ -107,6 +107,18 @@ inline double pq_decode(double signal) {
     return 10000 * std::pow(std::max(power - c1, 0.0) / (c2 - c3 * power), 1 / m1);
 }
 
+inline Rgb to_rec2020(Rgb v) {
+    return {.627403895934699*v.r+.329283038377884*v.g+.0433130656874172*v.b,
+            .0690972893582321*v.r+.919540395075459*v.g+.0113623155663092*v.b,
+            .0163914388751503*v.r+.0880133078772257*v.g+.895595253247624*v.b};
+}
+
+inline Rgb from_rec2020(Rgb v) {
+    return {1.66049100210843*v.r-.58764113878855*v.g-.0728498633198849*v.b,
+            -.124550474521591*v.r+1.13289989712596*v.g-.00834942260436948*v.b,
+            -.0181507633549053*v.r-.100578898008007*v.g+1.11872966136291*v.b};
+}
+
 struct Lab { double l, a, b; };
 
 inline Lab to_oklab(Rgb v) {
@@ -276,7 +288,7 @@ inline RenderedRegion render_region(const Frame& frame, const FrameRegion& regio
     const auto offset = [&](unsigned x, unsigned y) {
         return std::size_t(region.y + y) * frame.width + region.x + x;
     };
-    struct Stats { double component_peak = 0, luminance_peak = 0; bool wide_gamut = false, invalid = false; };
+    struct Stats { double component_peak = 0, luminance_peak = 0, tone_peak = 0; bool wide_gamut = false, invalid = false; };
     std::array<Stats, 4> partial{};
     parallel_rows(region.height, [&](unsigned worker, unsigned first, unsigned last) {
         Stats& stats = partial[worker];
@@ -285,15 +297,20 @@ inline RenderedRegion render_region(const Frame& frame, const FrameRegion& regio
             if (!std::isfinite(p.r) || !std::isfinite(p.g) || !std::isfinite(p.b)) { stats.invalid = true; return; }
             stats.component_peak = std::max(stats.component_peak, double(std::max({p.r, p.g, p.b})));
             stats.luminance_peak = std::max(stats.luminance_peak, luminance({p.r, p.g, p.b}));
+            if (region.hdr) {
+                const Rgb wide = to_rec2020({p.r,p.g,p.b});
+                stats.tone_peak = std::max({stats.tone_peak,wide.r,wide.g,wide.b});
+            }
             stats.wide_gamut = stats.wide_gamut || std::min({p.r,p.g,p.b}) < -0.0001f;
         }
     });
-    double component_peak = 0, luminance_peak = 0;
+    double component_peak = 0, luminance_peak = 0, tone_peak = 0;
     bool wide_gamut = false;
     for (const auto& stats : partial) {
         if (stats.invalid) throw std::runtime_error("Capture contains invalid floating-point colors.");
         component_peak = std::max(component_peak, stats.component_peak);
         luminance_peak = std::max(luminance_peak, stats.luminance_peak);
+        tone_peak = std::max(tone_peak, stats.tone_peak);
         wide_gamut = wide_gamut || stats.wide_gamut;
     }
     RenderedRegion result;
@@ -305,7 +322,7 @@ inline RenderedRegion render_region(const Frame& frame, const FrameRegion& regio
     if (!std::isfinite(white) || white <= 0) throw std::runtime_error("Invalid reference white.");
     result.reference_white = white;
     const double gain = 80 / white * (sdr ? 1 : std::exp2(settings.exposure));
-    const double peak = std::max(1.0, luminance_peak * gain);
+    const double peak = std::max(1.0, tone_peak * gain);
     result.tone_mapped = !sdr && peak > 1.000001;
     result.description = !region.hdr ? L"SDR preserved"
         : sdr ? L"SDR normalization" : L"HDR to SDR";
@@ -332,10 +349,9 @@ inline RenderedRegion render_region(const Frame& frame, const FrameRegion& regio
             }
             Rgb color = Rgb{p.r,p.g,p.b} * gain;
             if (!sdr) {
-                const double old_y = luminance(color);
-                if (old_y > 1e-12) color = color * (lookup.map(old_y) / old_y);
-                else if (old_y <= 0) color = {};
-                color = compress_gamut(color);
+                // Compress in the source gamut before limiting colors to sRGB.
+                const Rgb wide = to_rec2020(color);
+                color = from_rec2020({lookup.map(wide.r),lookup.map(wide.g),lookup.map(wide.b)});
             }
             const double noise = settings.dither && !sdr
                 ? (bayer[(y % 4) * 4 + x % 4] / 16.0 - 0.46875) * 0.75 : 0;
