@@ -8,7 +8,7 @@ struct Settings {
     std::filesystem::path folder = executable_directory()/L"Screenshots";
     std::wstring monitor;
     CaptureBackend backend = CaptureBackend::Auto;
-    ColorSettings color{ContentMode::Hdr,203,0,true};
+    ColorSettings color{ContentMode::Auto,203,0,true};
     bool keep_original = true, dark_mode = true;
     HdrFormat hdr_format = HdrFormat::UltraJpeg;
     UINT modifiers = 0, key = VK_SNAPSHOT;

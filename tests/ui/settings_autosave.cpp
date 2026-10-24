@@ -39,6 +39,13 @@ int wmain(int argc,wchar_t** argv) try {
     check_registry(RegCreateKeyExW(HKEY_CURRENT_USER,key.c_str(),0,nullptr,0,KEY_ALL_ACCESS,nullptr,&owned,&created),"Cannot create isolated automatic-settings key");
     require(created==REG_CREATED_NEW_KEY,"Refusing to reuse a registry fixture key");
     struct Remove {HKEY value;std::wstring key;~Remove(){RegCloseKey(value);RegDeleteKeyW(HKEY_CURRENT_USER,key.c_str());}} remove{owned,key};
+    require(!std::filesystem::exists(config_path()),"Refusing to reuse an existing settings file");
+    require(Settings{}.color.mode==ContentMode::Auto && load_settings().color.mode==ContentMode::Auto,
+            "Fresh settings must use Automatic content detection");
+    require(WritePrivateProfileStringW(L"Screenshot",L"Content",L"1",config_path().c_str())!=FALSE,"Cannot write owned HDR preference");
+    require(load_settings().color.mode==ContentMode::Hdr,"Automatic default replaced a saved HDR preference");
+    require(WritePrivateProfileStringW(L"Screenshot",L"Content",nullptr,config_path().c_str())!=FALSE,"Cannot remove owned content key");
+    require(load_settings().color.mode==ContentMode::Auto,"Missing content preference did not use Automatic");
     App app;app.startup=StartupRegistration(key);app.settings=Settings{};
     app.settings.folder=std::filesystem::path(argv[1]);app.settings.key=VK_F9;app.settings.modifiers=MOD_CONTROL|MOD_SHIFT|MOD_ALT;
     INITCOMMONCONTROLSEX common{sizeof(common),ICC_STANDARD_CLASSES};InitCommonControlsEx(&common);
@@ -132,6 +139,7 @@ int wmain(int argc,wchar_t** argv) try {
     require(GetFocus()==content && IsWindowVisible(window),"Automatic saving moved focus or hid settings");
     SendMessageW(content,CB_SHOWDROPDOWN,FALSE,0);
     choose(ContentChoice,1);
+    require(load_settings().color.mode==ContentMode::Hdr,"Explicit HDR content choice was not preserved");
     choose(HdrFormatChoice,1);require(load_settings().hdr_format==HdrFormat::JpegXr,"HDR format required manual saving");
     toggle(KeepOriginal,false);require(!load_settings().keep_original && !IsWindowVisible(GetDlgItem(window,HdrFormatChoice)),"HDR retention required manual saving");
     toggle(KeepOriginal,true);choose(HdrFormatChoice,0);

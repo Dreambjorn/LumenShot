@@ -20,7 +20,7 @@ Settings load_settings() {
         return GetPrivateProfileIntW(L"Screenshot",key,fallback,config_path().c_str());
     };
     settings.backend=CaptureBackend(std::min(value(L"Backend",0),2u));
-    settings.color.mode=ContentMode(std::min(value(L"Content",1),2u));
+    settings.color.mode=ContentMode(std::min(value(L"Content",0),2u));
     try { settings.color.paper_white=std::stod(ini_string(L"PaperWhite",L"203")); }
     catch (...) { settings.color.paper_white=203; }
     try { settings.color.exposure=std::stod(ini_string(L"Exposure",L"0")); }
