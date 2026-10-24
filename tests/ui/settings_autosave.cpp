@@ -24,7 +24,8 @@ void save_settings_preview(HWND window,const std::filesystem::path& path) {
     HBITMAP bitmap=CreateDIBSection(dc,&info,DIB_RGB_COLORS,&pixels,nullptr,0);
     if(!dc || !bitmap) throw std::runtime_error("Cannot render owned settings preview.");
     HGDIOBJ old=SelectObject(dc,bitmap);
-    SendMessageW(window,WM_PRINT,reinterpret_cast<WPARAM>(dc),PRF_CLIENT|PRF_CHILDREN|PRF_ERASEBKGND);
+    RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN|RDW_UPDATENOW);
+    require(PrintWindow(window,dc,PW_CLIENTONLY)!=FALSE,"Cannot print owned settings preview");
     GdiFlush();std::memcpy(image.bgra.data(),pixels,image.bgra.size());
     SelectObject(dc,old);DeleteObject(bitmap);DeleteDC(dc);
     for(std::size_t i=3;i<image.bgra.size();i+=4) image.bgra[i]=255;
@@ -32,6 +33,7 @@ void save_settings_preview(HWND window,const std::filesystem::path& path) {
 }
 int wmain(int argc,wchar_t** argv) try {
     if(argc!=2)throw std::runtime_error("Specify an owned automatic-settings evidence directory.");
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     check(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED),"Cannot initialize automatic-settings fixture");
     struct Finish {~Finish(){CoUninitialize();}} finish;
     const std::wstring key=L"Software\\LumenShotAutosave-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64());
@@ -52,6 +54,10 @@ int wmain(int argc,wchar_t** argv) try {
     require(load_settings().color.peak_method==PeakMethod::Observed,"Observed peak fallback was not restored");
     require(WritePrivateProfileStringW(L"Screenshot",L"PeakMethod",nullptr,config_path().c_str())!=FALSE,"Cannot remove owned peak key");
     require(load_settings().color.peak_method==PeakMethod::Robust,"Missing peak preference did not use the compared default");
+    require(Settings{}.show_magnifier && load_settings().show_magnifier,"Missing magnifier preference must preserve its enabled default");
+    require(WritePrivateProfileStringW(L"Screenshot",L"ShowMagnifier",L"0",config_path().c_str())!=FALSE,"Cannot write owned magnifier preference");
+    require(!load_settings().show_magnifier,"Disabled magnifier preference was ignored");
+    require(WritePrivateProfileStringW(L"Screenshot",L"ShowMagnifier",nullptr,config_path().c_str())!=FALSE,"Cannot remove owned magnifier preference");
     App app;app.startup=StartupRegistration(key);app.settings=Settings{};
     app.settings.folder=std::filesystem::path(argv[1]);app.settings.key=VK_F9;app.settings.modifiers=MOD_CONTROL|MOD_SHIFT|MOD_ALT;
     INITCOMMONCONTROLSEX common{sizeof(common),ICC_STANDARD_CLASSES};InitCommonControlsEx(&common);
@@ -78,7 +84,7 @@ int wmain(int argc,wchar_t** argv) try {
     const auto changed=[&](int id,int code=BN_CLICKED){SendMessageW(window,WM_COMMAND,MAKEWPARAM(id,code),reinterpret_cast<LPARAM>(GetDlgItem(window,id)));};
     const auto choose=[&](int id,int index){SendDlgItemMessageW(window,id,CB_SETCURSEL,index,0);changed(id,CBN_SELCHANGE);};
     const auto toggle=[&](int id,bool value){SendDlgItemMessageW(window,id,BM_SETCHECK,value?BST_CHECKED:BST_UNCHECKED,0);changed(id);};
-    ShowWindow(window,SW_SHOWNOACTIVATE);app.show_page(2);
+    ShowWindow(window,SW_SHOWNOACTIVATE);app.show_page(GeneralPage);
     app.settings.color.peak_method=PeakMethod::Observed;
     toggle(DarkMode,false);
     require(load_settings().color.peak_method==PeakMethod::Observed,"Automatic settings save replaced the selected peak fallback");
@@ -86,14 +92,26 @@ int wmain(int argc,wchar_t** argv) try {
     require(IsWindowVisible(window),"Automatic checkbox save hid settings");
     app.settings.color.peak_method=PeakMethod::Robust;
     toggle(DarkMode,true);require(load_settings().dark_mode && app.theme.dark,"Dark mode did not restore automatically");
-    app.show_page(0);
+    app.show_page(CapturePage);
+    HWND magnifier=GetDlgItem(window,ShowMagnifier);
+    require(IsWindowVisible(magnifier) && IsWindowEnabled(magnifier) && text(magnifier)==L"Show magnifier",
+            "Capture tab must expose an enabled magnifier checkbox");
+    toggle(ShowMagnifier,false);
+    require(!app.settings.show_magnifier && !load_settings().show_magnifier,"Magnifier checkbox required manual saving");
+    app.capture_settings=app.settings;app.busy=true;toggle(ShowMagnifier,true);
+    require(app.settings.show_magnifier && load_settings().show_magnifier && !app.capture_settings.show_magnifier,
+            "Magnifier checkbox changed an in-flight capture");app.busy=false;
+    toggle(ShowMagnifier,false);save_settings_preview(window,std::filesystem::path(argv[1])/L"capture-magnifier-dark.png");
+    toggle(DarkMode,false);save_settings_preview(window,std::filesystem::path(argv[1])/L"capture-magnifier-light.png");toggle(DarkMode,true);
+    toggle(ShowMagnifier,true);
     choose(BackendChoice,2);require(app.settings.backend==CaptureBackend::Desktop && load_settings().backend==CaptureBackend::Desktop,"Backend choice did not apply automatically");
     choose(BackendChoice,0);
     if(!app.displays.empty()) {
         choose(MonitorChoice,1);require(load_settings().monitor==app.displays.front().device_name,"Monitor choice did not persist automatically");
         choose(MonitorChoice,0);require(load_settings().monitor.empty(),"Active-monitor choice did not persist");
     }
-    app.show_page(1);
+    app.show_page(ImagePage);
+    require(!IsWindowVisible(magnifier),"Magnifier checkbox leaked onto the Image tab");
     SetDlgItemTextW(window,PeakNits,L"600");wait_for_edits(app);
     require(app.settings.color.peak_nits==600 && load_settings().color.peak_nits==600 && app.settings.color.paper_white==0,
             "Game peak did not persist independently of automatic white");
@@ -159,9 +177,11 @@ int wmain(int argc,wchar_t** argv) try {
     SendMessageW(content,CB_SHOWDROPDOWN,FALSE,0);
     choose(ContentChoice,1);
     require(load_settings().color.mode==ContentMode::Hdr,"Explicit HDR content choice was not preserved");
+    app.show_page(OutputPage);
     choose(HdrFormatChoice,1);require(load_settings().hdr_format==HdrFormat::JpegXr,"HDR format required manual saving");
     toggle(KeepOriginal,false);require(!load_settings().keep_original && !IsWindowVisible(GetDlgItem(window,HdrFormatChoice)),"HDR retention required manual saving");
     toggle(KeepOriginal,true);choose(HdrFormatChoice,0);
+    app.show_page(ImagePage);
     SetFocus(GetDlgItem(window,PaperWhite));SetDlgItemTextW(window,PaperWhite,L"250");
     require(app.settings.color.paper_white==0,"Text edit saved before debounce");
     wait_for_edits(app);
@@ -200,6 +220,14 @@ int wmain(int argc,wchar_t** argv) try {
     require(load_settings().keep_original && !app.registered_key,"Unavailable shortcut blocked unrelated setting");
     require(text(app.status).find(L"shortcut is unavailable")!=std::wstring::npos,"Automatic save hid unavailable-shortcut warning");
     changed(KeyChoice,CBN_SELCHANGE);require(app.registered_key==VK_F9,"Shortcut change did not retry registration");
+    for(bool dark:{true,false}) {
+        toggle(DarkMode,dark);
+        for(int page=0;page<SettingsPageCount;++page) {
+            app.show_page(page);
+            save_settings_preview(window,std::filesystem::path(argv[1])/(L"settings-"+std::to_wstring(page)+(dark?L"-dark.png":L"-light.png")));
+        }
+    }
+    toggle(DarkMode,true);app.show_page(OutputPage);
     SetDlgItemTextW(window,ControlId::Folder,L"relative-folder");wait_for_edits(app);
     require(app.settings.folder==std::filesystem::path(argv[1]),"Relative folder replaced valid output path");
     const auto output=std::filesystem::path(argv[1])/L"new-output";

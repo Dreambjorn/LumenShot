@@ -1,6 +1,7 @@
 #pragma once
 #include "image/color.hpp"
 #include "ui/window_snap.hpp"
+#include "ui/magnifier.hpp"
 #include <commdlg.h>
 #include <windowsx.h>
 #include <initializer_list>
@@ -204,7 +205,11 @@ class RegionSelector {
     RECT last_visual_{};
     RECT selection_{},drag_start_{},snap_hover_{},snap_pending_{};
     std::vector<RECT> snap_windows_;
-    POINT anchor_{},text_origin_{};
+    POINT anchor_{},text_origin_{},pointer_{};
+    RECT magnifier_{};
+    int magnifier_cell_=8;
+    bool pointer_inside_=false,magnifier_enabled_=true;
+    std::wstring magnifier_label_;
     std::vector<Annotation> marks_;
     Annotation current_;
     MarkTool tool_=MarkTool::Select;
@@ -250,6 +255,43 @@ class RegionSelector {
             hint_bounds_=tooltip_rect(area,button_bounds(hover_),{size.cx+16,size.cy+10},hover_<8);
         }
     }
+    bool update_pointer(POINT point) {
+        const bool inside=(point.x>=0 && point.y>=0 && point.x<LONG(image_.width) && point.y<LONG(image_.height)) || drag_;
+        const POINT next{std::clamp(point.x,0l,LONG(image_.width)-1),std::clamp(point.y,0l,LONG(image_.height)-1)};
+        const bool changed=inside!=pointer_inside_ || next.x!=pointer_.x || next.y!=pointer_.y;
+        if(inside && !pointer_inside_ && window_) {
+            TRACKMOUSEEVENT tracking{sizeof(tracking),TME_LEAVE,window_,0};TrackMouseEvent(&tracking);
+        }
+        pointer_=next;pointer_inside_=inside;return changed;
+    }
+    void layout_magnifier() {
+        magnifier_={};magnifier_label_.clear();
+        if(!magnifier_enabled_ || !pointer_inside_ || edit_ || tool_!=MarkTool::Select || hover_>=0 || drag_==4) return;
+        RECT area{0,0,LONG(image_.width),LONG(image_.height)};
+        if(window_) {
+            POINT origin{};ClientToScreen(window_,&origin);
+            MONITORINFO monitor{};monitor.cbSize=sizeof(monitor);
+            if(GetMonitorInfoW(MonitorFromPoint({origin.x+pointer_.x,origin.y+pointer_.y},MONITOR_DEFAULTTONEAREST),&monitor)) {
+                OffsetRect(&monitor.rcMonitor,-origin.x,-origin.y);RECT visible{};
+                if(!IntersectRect(&visible,&area,&monitor.rcMonitor)) return;
+                area=visible;
+            }
+        }
+        const UINT dpi=window_?GetDpiForWindow(window_):96;
+        magnifier_cell_=std::clamp(MulDiv(8,dpi?dpi:96,96),6,24);
+        const RECT dimensions=valid_rect(selection_)?selection_:snap_hover_;
+        if(valid_rect(dimensions)) magnifier_label_=std::to_wstring(dimensions.right-dimensions.left)+L" x "+std::to_wstring(dimensions.bottom-dimensions.top);
+        const LONG grid=11*magnifier_cell_;
+        const SIZE size{std::max(grid+12,magnifier_label_.empty()?0l:144l),grid+(magnifier_label_.empty()?12:38)};
+        magnifier_=magnifier_rect(area,pointer_,size);
+    }
+    void invalidate_magnifier() {
+        if(!window_ || finished_) return;
+        const RECT previous=magnifier_;layout_magnifier();
+        if(valid_rect(previous)) InvalidateRect(window_,&previous,FALSE);
+        if(valid_rect(magnifier_)) InvalidateRect(window_,&magnifier_,FALSE);
+        last_visual_=visual_bounds();
+    }
     RECT button_bounds(int index) const {
         if(index<8) return {vertical_.left+3,vertical_.top+4+index*32,vertical_.right-3,vertical_.top+4+(index+1)*32};
         const int i=index-8;
@@ -283,6 +325,7 @@ class RegionSelector {
             if(!drag_) {include(vertical_);include(horizontal_);}
         }
         if(valid_rect(snap_hover_)) {RECT hover=snap_hover_;InflateRect(&hover,2,2);include(hover);}
+        if(valid_rect(magnifier_)) include(magnifier_);
         if(!hint_.empty()) include(hint_bounds_);
         return bounds;
     }
@@ -290,6 +333,7 @@ class RegionSelector {
         if(!window_ || finished_) return;
         const RECT previous=last_visual_;
         if(!drag_) layout();
+        layout_magnifier();
         last_visual_=visual_bounds();
         if(valid_rect(previous)) InvalidateRect(window_,&previous,FALSE);
         if(valid_rect(last_visual_)) InvalidateRect(window_,&last_visual_,FALSE);
@@ -330,6 +374,7 @@ class RegionSelector {
         invalidate();
     }
     void mouse_down(POINT p) {
+        update_pointer(p);
         const int button_index=hit_button(p);
         if(button_index>=0) {button(button_index);return;}
         commit_text();
@@ -358,12 +403,13 @@ class RegionSelector {
         SetCapture(window_);invalidate();
     }
     void mouse_move(POINT p) {
+        const bool pointer_changed=update_pointer(p);
         p=clamp_point(p);
         const RECT before=selection_;
         if(drag_==5) {
             // Wait for release so window clicks still allow free dragging.
             if(std::abs(p.x-anchor_.x)<GetSystemMetrics(SM_CXDRAG)
-               && std::abs(p.y-anchor_.y)<GetSystemMetrics(SM_CYDRAG)) return;
+               && std::abs(p.y-anchor_.y)<GetSystemMetrics(SM_CYDRAG)) {if(pointer_changed) invalidate_magnifier();return;}
             drag_=1;snap_hover_=snap_pending_={};
         }
         if(drag_==1) selection_=normalize_rect(anchor_,p);
@@ -402,12 +448,12 @@ class RegionSelector {
             else if(handle&12) cursor=IDC_SIZENS;
             else if(tool_==MarkTool::Select && PtInRect(&selection_,p)) cursor=IDC_SIZEALL;
             SetCursor(LoadCursorW(nullptr,cursor));
-            if(hover_==previous_hover && EqualRect(&previous_snap,&snap_hover_)) return;
+            if(hover_==previous_hover && EqualRect(&previous_snap,&snap_hover_)) {if(pointer_changed) invalidate_magnifier();return;}
             if((hover_>=0 || valid_rect(snap_hover_)) && window_) {
                 TRACKMOUSEEVENT tracking{sizeof(tracking),TME_LEAVE,window_,0};TrackMouseEvent(&tracking);
             }
         }
-        if(drag_ && drag_!=4 && EqualRect(&before,&selection_)) return;
+        if(drag_ && drag_!=4 && EqualRect(&before,&selection_)) {if(pointer_changed) invalidate_magnifier();return;}
         invalidate();
         if(drag_) UpdateWindow(window_);
     }
@@ -563,7 +609,7 @@ class RegionSelector {
             case WM_PRINTCLIENT:self->paint(reinterpret_cast<HDC>(wp));return 0;
             case WM_LBUTTONDOWN:self->mouse_down({GET_X_LPARAM(lp),GET_Y_LPARAM(lp)});return 0;
             case WM_MOUSEMOVE:self->mouse_move({GET_X_LPARAM(lp),GET_Y_LPARAM(lp)});return 0;
-            case WM_MOUSELEAVE:self->hint_.clear();self->hover_=-1;self->snap_hover_={};self->invalidate();return 0;
+            case WM_MOUSELEAVE:self->hint_.clear();self->hover_=-1;self->snap_hover_={};self->pointer_inside_=false;self->invalidate();return 0;
             case WM_LBUTTONUP:self->mouse_up({GET_X_LPARAM(lp),GET_Y_LPARAM(lp)});return 0;
             case WM_RBUTTONUP:self->commit_text(true);self->tool_=MarkTool::Select;self->invalidate();return 0;
             case WM_HOTKEY:if(wp==selection_escape_hotkey_id) self->finish(SelectionAction::Cancel);return 0;
@@ -577,7 +623,7 @@ class RegionSelector {
         return DefWindowProcW(window,message,wp,lp);
     }
 public:
-    explicit RegionSelector(Image image):image_(std::move(image)) {
+    explicit RegionSelector(Image image,bool show_magnifier=true):image_(std::move(image)),magnifier_enabled_(show_magnifier) {
         if(image_.bgra.size()!=checked_pixels(image_.width,image_.height)*4)
             throw std::runtime_error("Invalid selection preview pixels.");
         font_=CreateFontW(-17,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
@@ -630,7 +676,8 @@ public:
             }
             SelectObject(dc,font_);SetBkMode(dc,OPAQUE);SetBkColor(dc,RGB(38,41,47));SetTextColor(dc,RGB(255,255,255));
             const auto size=std::to_wstring(selection_.right-selection_.left)+L" x "+std::to_wstring(selection_.bottom-selection_.top);
-            TextOutW(dc,selection_.left,std::max(0l,selection_.top-25),size.c_str(),int(size.size()));
+            if(!drag_ || !valid_rect(magnifier_))
+                TextOutW(dc,selection_.left,std::max(0l,selection_.top-25),size.c_str(),int(size.size()));
             if(!drag_) {toolbar(dc,vertical_,true);toolbar(dc,horizontal_,false);}
         }
         if(!hint_.empty() && valid_rect(hint_bounds_)) {
@@ -640,6 +687,7 @@ public:
             SelectObject(dc,font_);SetTextColor(dc,RGB(255,255,255));SetBkMode(dc,TRANSPARENT);
             DrawTextW(dc,hint_.c_str(),int(hint_.size()),&label,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
         }
+        draw_magnifier(dc,image_,pointer_,magnifier_,magnifier_cell_,magnifier_label_,font_);
         RestoreDC(dc,state);
         BitBlt(target,dirty.left,dirty.top,width,height,dc,dirty.left,dirty.top,SRCCOPY);
         last_visual_=visual_bounds();

@@ -66,12 +66,27 @@ int wmain() try {
     SendMessageW(settings,tray_message,0,WM_LBUTTONDBLCLK);
     require(IsWindowVisible(settings),"Tray activation must show settings");
     require(app.settings.dark_mode && app.theme.dark,"Dark mode must default to enabled");
-    require(TabCtrl_GetItemCount(GetDlgItem(settings,SettingsTabs))==3,"Settings categories are missing");
+    require(TabCtrl_GetItemCount(GetDlgItem(settings,SettingsTabs))==SettingsPageCount,"Settings categories are missing");
     require(IsWindowVisible(GetDlgItem(settings,MonitorChoice)) && !IsWindowVisible(GetDlgItem(settings,ContentChoice)),"Capture tab shows incorrect controls");
+    const std::pair<int,std::vector<int>> groups[]={
+        {CapturePage,{MonitorChoice,BackendChoice,ModifierCtrl,ModifierShift,ModifierAlt,KeyChoice,ShowMagnifier}},
+        {ImagePage,{ContentChoice,PeakNits,PaperWhite,Exposure,ImageSize,Sharpness}},
+        {OutputPage,{ControlId::Folder,Browse,KeepOriginal,HdrFormatChoice}},
+        {GeneralPage,{DarkMode,StartWithWindows,LicensesButton}}};
+    const wchar_t* titles[]={L"Capture",L"Image",L"Output",L"General"};
+    for(const auto& group:groups) {
+        app.show_page(group.first);wchar_t title[32]{};TCITEMW item{};item.mask=TCIF_TEXT;item.pszText=title;item.cchTextMax=32;
+        require(TabCtrl_GetItem(GetDlgItem(settings,SettingsTabs),group.first,&item) && wcscmp(title,titles[group.first])==0,"Settings tab order or label is incorrect");
+        for(const auto& candidate:groups) for(const int id:candidate.second)
+            require((IsWindowVisible(GetDlgItem(settings,id))!=FALSE)==(candidate.first==group.first),"Settings control appeared on the wrong tab");
+        for(const int id:{CaptureButton,SaveButton,Status,FolderButton,ExitButton})
+            require(IsWindowVisible(GetDlgItem(settings,id)) && IsWindowEnabled(GetDlgItem(settings,id)),"Shared action disappeared when changing tabs");
+    }
+    app.show_page(CapturePage);
     HWND tabs=GetDlgItem(settings,SettingsTabs);SetFocus(tabs);
     SendMessageW(tabs,WM_KEYDOWN,VK_RIGHT,0);SendMessageW(tabs,WM_KEYUP,VK_RIGHT,0);
-    require(app.active_page==1,"Native tab keyboard navigation did not select Output");
-    app.show_page(2);
+    require(app.active_page==ImagePage,"Native tab keyboard navigation did not select Image");
+    app.show_page(GeneralPage);
     require(IsWindowVisible(GetDlgItem(settings,DarkMode)) && IsWindowVisible(GetDlgItem(settings,StartWithWindows)),"General tab is incomplete");
     HWND licenses_button=GetDlgItem(settings,LicensesButton);
     require(licenses_button && IsWindowVisible(licenses_button),"General tab has no license viewer entry");
@@ -128,17 +143,18 @@ int wmain() try {
             "Viewing licenses changed unrelated capture settings");
     SendDlgItemMessageW(settings,DarkMode,BM_SETCHECK,BST_CHECKED,0);SendMessageW(settings,WM_COMMAND,DarkMode,0);
     require(app.theme.dark,"Dark mode did not restore immediately");
-    app.show_page(1);
-    require(!IsWindowVisible(GetDlgItem(settings,MonitorChoice)) && IsWindowVisible(GetDlgItem(settings,ContentChoice)),"Output tab shows incorrect controls");
+    app.show_page(ImagePage);
+    require(!IsWindowVisible(GetDlgItem(settings,MonitorChoice)) && IsWindowVisible(GetDlgItem(settings,ContentChoice)),"Image tab shows incorrect controls");
     HWND sharpness=GetDlgItem(settings,Sharpness);
-    require(sharpness && IsWindowVisible(sharpness) && IsWindowEnabled(sharpness),"Output sharpness slider is missing or disabled");
+    require(sharpness && IsWindowVisible(sharpness) && IsWindowEnabled(sharpness),"Image sharpness slider is missing or disabled");
     require(SendMessageW(sharpness,TBM_GETRANGEMIN,0,0)==0 && SendMessageW(sharpness,TBM_GETRANGEMAX,0,0)==100,
             "Sharpness slider has an incorrect range");
     require(GetWindowLongPtrW(sharpness,GWL_STYLE)&WS_TABSTOP,"Sharpness slider is inaccessible by keyboard");
     HWND image_size=GetDlgItem(settings,ImageSize);
-    require(image_size && IsWindowVisible(image_size) && IsWindowEnabled(image_size),"Output image size is missing or disabled");
+    require(image_size && IsWindowVisible(image_size) && IsWindowEnabled(image_size),"Image size is missing or disabled");
     require(SendMessageW(image_size,CB_GETCOUNT,0,0)==4 && SendMessageW(image_size,CB_GETCURSEL,0,0)==0,
-            "Output image sizes or Original default are incorrect");
+            "Image sizes or Original default are incorrect");
+    app.show_page(OutputPage);
     require(text(GetDlgItem(settings,KeepOriginal))==L"Save HDR image","HDR save label is inconsistent");
     HWND format=GetDlgItem(settings,HdrFormatChoice);
     require(format && SendMessageW(format,CB_GETCOUNT,0,0)==2,"HDR format choices are missing");
@@ -166,6 +182,7 @@ int wmain() try {
     SendMessageW(settings,WM_TIMER,countdown_timer,0);
     require(!app.busy && app.countdown==0,"A stale timer restarted a canceled capture");
     require(!GetDlgItem(settings,113),"Settings must not expose the retired JXR import button");
+    app.show_page(ImagePage);
     HWND content=GetDlgItem(settings,ContentChoice);
     SetForegroundWindow(settings);SetFocus(content);
     SendMessageW(content,CB_SHOWDROPDOWN,TRUE,0);
@@ -175,7 +192,7 @@ int wmain() try {
     require(app.busy,"Hotkey did not start a screenshot request");
     require(IsWindowVisible(settings),"Hotkey hid the open settings window");
     for(int id: {ControlId::Folder,Browse,MonitorChoice,BackendChoice,ContentChoice,PaperWhite,Exposure,KeepOriginal,
-                 ModifierCtrl,ModifierShift,ModifierAlt,KeyChoice,CaptureButton,SaveButton,FolderButton,ExitButton,HdrFormatChoice,StartWithWindows,DarkMode,SettingsTabs,Sharpness,SharpnessValue,ImageSize,LicensesButton})
+                 ModifierCtrl,ModifierShift,ModifierAlt,KeyChoice,CaptureButton,SaveButton,FolderButton,ExitButton,HdrFormatChoice,StartWithWindows,DarkMode,SettingsTabs,Sharpness,SharpnessValue,ImageSize,LicensesButton,ShowMagnifier,PeakNits})
         require(IsWindowEnabled(GetDlgItem(settings,id)),"Capture disabled a settings control");
     require(GetFocus()==content,"Capture moved focus away from the open dropdown");
     require(SendMessageW(content,CB_GETDROPPEDSTATE,0,0),"Capture closed the open dropdown before freezing it");

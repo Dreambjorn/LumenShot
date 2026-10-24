@@ -64,10 +64,10 @@ void App::create_controls() {
     INITCOMMONCONTROLSEX tab_classes{sizeof(tab_classes),ICC_TAB_CLASSES|ICC_BAR_CLASSES};InitCommonControlsEx(&tab_classes);
     constexpr int left=28,right=370,column_width=316,content_width=658,field_height=30;
     HWND tabs=control(WC_TABCONTROLW,L"",WS_TABSTOP|TCS_FIXEDWIDTH|TCS_SINGLELINE,SettingsTabs,left,104,content_width,40);
-    const wchar_t* pages[]={L"Capture",L"Output",L"General"};
-    for(int i=0;i<3;++i){TCITEMW item{};item.mask=TCIF_TEXT;item.pszText=const_cast<wchar_t*>(pages[i]);TabCtrl_InsertItem(tabs,i,&item);}
-    TabCtrl_SetItemSize(tabs,(content_width-4)/3,36);
-    creating_page=0;
+    const wchar_t* pages[]={L"Capture",L"Image",L"Output",L"General"};
+    for(int i=0;i<SettingsPageCount;++i){TCITEMW item{};item.mask=TCIF_TEXT;item.pszText=const_cast<wchar_t*>(pages[i]);TabCtrl_InsertItem(tabs,i,&item);}
+    TabCtrl_SetItemSize(tabs,(content_width-4)/SettingsPageCount,36);
+    creating_page=CapturePage;
     label(L"Capture monitor",left,168,column_width);label(L"Capture method",right,168,column_width);
     displays=monitors();
     std::vector<std::wstring> monitor_names{L"Monitor with active window"};
@@ -89,31 +89,34 @@ void App::create_controls() {
     }
     std::vector<std::wstring> keys{L"Print Screen"};for(int i=1;i<=11;++i)keys.push_back(L"F"+std::to_wstring(i));
     add_combo(KeyChoice,keys,settings.key==VK_SNAPSHOT?0:int(settings.key-VK_F1)+1,right,262,column_width);
-    creating_page=1;
-    label(L"Save folder",left,168,column_width);
-    control(L"EDIT",settings.folder.c_str(),ES_AUTOHSCROLL|WS_TABSTOP,Folder,left,194,542,field_height);
-    control(L"BUTTON",L"Browse...",BS_PUSHBUTTON|WS_TABSTOP,Browse,580,194,106,field_height);
-    label(L"Content",left,236,column_width);label(L"Peak nits (0=Auto)",right,236,148);label(L"White nits (0=Auto)",538,236,148);
-    add_combo(ContentChoice,{L"Automatic",L"HDR content",L"SDR content on HDR display"},int(settings.color.mode),left,262,column_width);
-    control(L"EDIT",std::to_wstring(int(settings.color.peak_nits)).c_str(),ES_NUMBER|WS_TABSTOP,PeakNits,right,262,148,field_height);
-    control(L"EDIT",std::to_wstring(int(settings.color.paper_white)).c_str(),ES_NUMBER|WS_TABSTOP,PaperWhite,538,262,148,field_height);
-    label(L"HDR exposure (stops)",left,304,170);
-    label(L"Image size",210,304,134);
+    HWND magnifier=control(L"BUTTON",L"Show magnifier",BS_AUTOCHECKBOX|WS_TABSTOP,ShowMagnifier,left,316,column_width,field_height);
+    SendMessageW(magnifier,BM_SETCHECK,settings.show_magnifier?BST_CHECKED:BST_UNCHECKED,0);
+    creating_page=ImagePage;
+    label(L"Content",left,168,column_width);label(L"Peak nits (0=Auto)",right,168,148);label(L"White nits (0=Auto)",538,168,148);
+    add_combo(ContentChoice,{L"Automatic",L"HDR content",L"SDR content on HDR display"},int(settings.color.mode),left,194,column_width);
+    control(L"EDIT",std::to_wstring(int(settings.color.peak_nits)).c_str(),ES_NUMBER|WS_TABSTOP,PeakNits,right,194,148,field_height);
+    control(L"EDIT",std::to_wstring(int(settings.color.paper_white)).c_str(),ES_NUMBER|WS_TABSTOP,PaperWhite,538,194,148,field_height);
+    label(L"HDR exposure (stops)",left,236,170);
+    label(L"Image size",210,236,134);
     std::wostringstream exposure_text;exposure_text<<std::fixed<<std::setprecision(2)<<settings.color.exposure;
-    control(L"EDIT",exposure_text.str().c_str(),ES_AUTOHSCROLL|WS_TABSTOP,Exposure,left,330,170,field_height);
+    control(L"EDIT",exposure_text.str().c_str(),ES_AUTOHSCROLL|WS_TABSTOP,Exposure,left,262,170,field_height);
     const auto size_index=std::find(image_scales.begin(),image_scales.end(),settings.scale)-image_scales.begin();
-    add_combo(ImageSize,{L"Original",L"125%",L"150%",L"200%"},int(size_index),210,330,134);
-    label(L"Sharpness",right,304,column_width);
-    HWND sharpness=control(TRACKBAR_CLASSW,L"",TBS_HORZ|TBS_NOTICKS|WS_TABSTOP,Sharpness,right,330,260,field_height);
+    add_combo(ImageSize,{L"Original",L"125%",L"150%",L"200%"},int(size_index),210,262,134);
+    label(L"Sharpness",right,236,column_width);
+    HWND sharpness=control(TRACKBAR_CLASSW,L"",TBS_HORZ|TBS_NOTICKS|WS_TABSTOP,Sharpness,right,262,260,field_height);
     SendMessageW(sharpness,TBM_SETRANGE,TRUE,MAKELPARAM(0,100));
     SendMessageW(sharpness,TBM_SETPAGESIZE,0,10);
     SendMessageW(sharpness,TBM_SETPOS,TRUE,settings.sharpness);
-    control(L"STATIC",L"Off",SS_LEFT|SS_CENTERIMAGE,SharpnessValue,640,330,46,field_height);
+    control(L"STATIC",L"Off",SS_LEFT|SS_CENTERIMAGE,SharpnessValue,640,262,46,field_height);
     update_sharpness_label();
-    HWND keep=control(L"BUTTON",L"Save HDR image",BS_AUTOCHECKBOX|WS_TABSTOP,KeepOriginal,left,376,column_width,field_height);
+    creating_page=OutputPage;
+    label(L"Save folder",left,168,column_width);
+    control(L"EDIT",settings.folder.c_str(),ES_AUTOHSCROLL|WS_TABSTOP,Folder,left,194,542,field_height);
+    control(L"BUTTON",L"Browse...",BS_PUSHBUTTON|WS_TABSTOP,Browse,580,194,106,field_height);
+    HWND keep=control(L"BUTTON",L"Save HDR image",BS_AUTOCHECKBOX|WS_TABSTOP,KeepOriginal,left,236,column_width,field_height);
     SendMessageW(keep,BM_SETCHECK,settings.keep_original?BST_CHECKED:BST_UNCHECKED,0);
-    add_combo(HdrFormatChoice,{L"Ultra HDR JPEG (.jpg) - recommended",L"JPEG XR (.jxr) - lossless HDR"},int(settings.hdr_format),right,376,column_width);
-    creating_page=2;
+    add_combo(HdrFormatChoice,{L"Ultra HDR JPEG (.jpg) - recommended",L"JPEG XR (.jxr) - lossless HDR"},int(settings.hdr_format),right,236,column_width);
+    creating_page=GeneralPage;
     HWND dark=control(L"BUTTON",L"Dark mode",BS_AUTOCHECKBOX|WS_TABSTOP,DarkMode,left,168,column_width,field_height);
     SendMessageW(dark,BM_SETCHECK,settings.dark_mode?BST_CHECKED:BST_UNCHECKED,0);
     control(L"BUTTON",L"Licenses...",BS_PUSHBUTTON|WS_TABSTOP,LicensesButton,right,168,column_width,field_height);
@@ -125,7 +128,7 @@ void App::create_controls() {
     status=control(L"EDIT",L"Preparing screenshot shortcut...",ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL|WS_VSCROLL,Status,left,488,content_width,80);
     control(L"BUTTON",L"Open screenshots",BS_PUSHBUTTON|WS_TABSTOP,FolderButton,left,592,170,field_height);
     control(L"BUTTON",L"Exit",BS_PUSHBUTTON|WS_TABSTOP,ExitButton,516,592,170,field_height);
-    theme.apply(window,settings.dark_mode);show_page(0);
+    theme.apply(window,settings.dark_mode);show_page(CapturePage);
     menu_window=CreateWindowExW(WS_EX_TOOLWINDOW,L"STATIC",L"",WS_POPUP,0,0,0,0,
                                nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
     if (!menu_window) throw std::runtime_error("Cannot create tray menu owner.");
@@ -141,7 +144,7 @@ void App::create_controls() {
 }
 
 void App::show_page(int page) {
-    active_page=std::clamp(page,0,2);TabCtrl_SetCurSel(GetDlgItem(window,SettingsTabs),active_page);
+    active_page=std::clamp(page,0,int(SettingsPageCount)-1);TabCtrl_SetCurSel(GetDlgItem(window,SettingsTabs),active_page);
     for(const auto& item:page_controls)
         ShowWindow(item.first,item.second==active_page?SW_SHOWNA:SW_HIDE);
     update_hdr_choice();InvalidateRect(window,nullptr,TRUE);
@@ -149,7 +152,7 @@ void App::show_page(int page) {
 
 void App::update_hdr_choice() {
     const bool keep=SendDlgItemMessageW(window,KeepOriginal,BM_GETCHECK,0,0)==BST_CHECKED;
-    ShowWindow(GetDlgItem(window,HdrFormatChoice),keep && active_page==1?SW_SHOWNA:SW_HIDE);
+    ShowWindow(GetDlgItem(window,HdrFormatChoice),keep && active_page==OutputPage?SW_SHOWNA:SW_HIDE);
 }
 
 void App::update_sharpness_label() {
@@ -205,6 +208,8 @@ void App::read_controls(int changed) {
         const auto index=SendDlgItemMessageW(window,ImageSize,CB_GETCURSEL,0,0);
         next.scale=index>=0 && std::size_t(index)<image_scales.size()?image_scales[std::size_t(index)]:100;
     }
+    if(!changed || changed==ShowMagnifier)
+        next.show_magnifier=SendDlgItemMessageW(window,ShowMagnifier,BM_GETCHECK,0,0)==BST_CHECKED;
     if(!changed || changed==DarkMode)
         next.dark_mode=SendDlgItemMessageW(window,DarkMode,BM_GETCHECK,0,0)==BST_CHECKED;
     if(!changed || changed==KeepOriginal)
@@ -338,7 +343,7 @@ LRESULT CALLBACK window_proc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
             case MonitorChoice: case BackendChoice: case ContentChoice: case HdrFormatChoice: case KeyChoice: case ImageSize:
                 if(app->controls_ready && HIWORD(wp)==CBN_SELCHANGE) app->apply_setting(LOWORD(wp));
                 break;
-            case KeepOriginal: case DarkMode: case StartWithWindows: case ModifierCtrl: case ModifierShift: case ModifierAlt:
+            case KeepOriginal: case DarkMode: case ShowMagnifier: case StartWithWindows: case ModifierCtrl: case ModifierShift: case ModifierAlt:
                 if(app->controls_ready && HIWORD(wp)==BN_CLICKED) app->apply_setting(LOWORD(wp));
                 if(LOWORD(wp)==KeepOriginal) app->update_hdr_choice();
                 break;

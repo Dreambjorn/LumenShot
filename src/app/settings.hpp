@@ -9,7 +9,7 @@ struct Settings {
     std::wstring monitor;
     CaptureBackend backend = CaptureBackend::Auto;
     ColorSettings color{ContentMode::Auto,0,0,true};
-    bool keep_original = true, dark_mode = true;
+    bool keep_original = true, dark_mode = true, show_magnifier = true;
     HdrFormat hdr_format = HdrFormat::UltraJpeg;
     UINT modifiers = 0, key = VK_SNAPSHOT;
     unsigned sharpness = 0, scale = 100;

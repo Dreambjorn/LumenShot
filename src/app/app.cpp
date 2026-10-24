@@ -108,7 +108,7 @@ void App::finish_work() {
         Frame cropped;
         RECT margin{};
         {
-            RegionSelector selector(std::move(result.preview));
+            RegionSelector selector(std::move(result.preview),capture_settings.show_magnifier);
             active_selector=&selector;
             struct ClearSelector {RegionSelector*& value;~ClearSelector(){value=nullptr;}} clear{active_selector};
             selected=selector.run(window,result.bounds);

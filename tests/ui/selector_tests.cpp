@@ -156,6 +156,7 @@ Image selector_window_image(HWND window,const Image& previous={}) {
     return image;
 }
 void check_tooltips(HWND window,POINT vertical,POINT horizontal,bool right_edge,const std::filesystem::path& directory) {
+    SendMessageW(window,WM_MOUSELEAVE,0,0);const auto outside=selector_window_image(window);
     SendMessageW(window,WM_MOUSEMOVE,0,MAKELPARAM(30,500));
     const auto baseline=selector_window_image(window);auto previous=baseline;
     for(int index=0;index<11;++index) {
@@ -199,7 +200,179 @@ void check_tooltips(HWND window,POINT vertical,POINT horizontal,bool right_edge,
     require(cleared.bgra==baseline.bgra,"Leaving a button left tooltip pixels or a stale highlight");
     SendMessageW(window,WM_MOUSEMOVE,0,MAKELPARAM(vertical.x,vertical.y));
     auto hovered=selector_window_image(window,cleared);SendMessageW(window,WM_MOUSELEAVE,0,0);
-    require(selector_window_image(window,hovered).bgra==baseline.bgra,"Leaving capture left tooltip pixels or a stale highlight");
+    require(selector_window_image(window,hovered).bgra==outside.bgra,"Leaving capture left tooltip or magnifier pixels");
+}
+RECT magnifier_bounds(const Image& image,bool expected=true) {
+    RECT bounds{LONG(image.width),LONG(image.height),0,0};
+    for(unsigned y=0;y<image.height;++y) for(unsigned x=0;x<image.width;++x) {
+        const auto i=(std::size_t(y)*image.width+x)*4;
+        if(image.bgra[i]==119 && image.bgra[i+1]==104 && image.bgra[i+2]==94) {
+            bounds.left=std::min(bounds.left,LONG(x));bounds.top=std::min(bounds.top,LONG(y));
+            bounds.right=std::max(bounds.right,LONG(x)+1);bounds.bottom=std::max(bounds.bottom,LONG(y)+1);
+        }
+    }
+    require(valid_rect(bounds)==expected,"Magnifier visibility disagrees with the capture setting");return bounds;
+}
+void check_magnifier(HWND window,const Image& source,bool selected,const std::filesystem::path& directory,bool enabled) {
+    if(!enabled) {
+        for(const POINT point:{POINT{160,180},POINT{899,599}}) {
+            SendMessageW(window,WM_MOUSEMOVE,0,MAKELPARAM(point.x,point.y));magnifier_bounds(selector_window_image(window),false);
+        }
+        SendMessageW(window,WM_CLOSE,0,0);return;
+    }
+    SendMessageW(window,WM_MOUSELEAVE,0,0);const auto baseline=selector_window_image(window);auto previous=baseline;
+    const int cell=MulDiv(8,GetDpiForWindow(window),96);
+    const DWORD drawing_objects=GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS);
+    const POINT points[]={{160,180},{161,180},{161,181},{161,180},{0,0},{899,0},{899,599},{0,599}};
+    RECT previous_bounds{};POINT previous_pointer{};
+    for(const auto point:points) {
+        SendMessageW(window,WM_MOUSEMOVE,0,MAKELPARAM(point.x,point.y));
+        const auto image=selector_window_image(window,previous);
+        require(image.bgra==selector_window_image(window).bgra,"Moving magnifier left stale pixels outside repaint damage");
+        const RECT bounds=magnifier_bounds(image);
+        if(valid_rect(previous_bounds) && std::abs(point.x-previous_pointer.x)+std::abs(point.y-previous_pointer.y)==1)
+            require(std::abs(bounds.left-previous_bounds.left)<=8 && std::abs(bounds.top-previous_bounds.top)<=8,
+                    "One-pixel pointer movement made the magnifier jump to another anchor");
+        previous_bounds=bounds;previous_pointer=point;
+        require(bounds.left>=0 && bounds.top>=0 && bounds.right<=900 && bounds.bottom<=600,"Magnifier left its visible monitor area");
+        const LONG dx=std::max({0l,bounds.left-point.x,point.x-bounds.right});
+        const LONG dy=std::max({0l,bounds.top-point.y,point.y-bounds.bottom});
+        require(dx<=18 && dy<=18,"Magnifier moved away from the current pointer");
+        const LONG left=bounds.left+(bounds.right-bounds.left-11*cell)/2,top=bounds.top+6;
+        for(int y=0;y<11;++y) for(int x=0;x<11;++x) {
+            if((x==5 && (y==0 || y==10)) || (y==5 && (x==0 || x==10))) continue;
+            const LONG sx=std::clamp(point.x+x-5,0l,899l),sy=std::clamp(point.y+y-5,0l,599l);
+            const auto actual=(std::size_t(top+y*cell+cell/2)*900+left+x*cell+cell/2)*4;
+            const auto expected=(std::size_t(sy)*900+sx)*4;
+            require(std::memcmp(image.bgra.data()+actual,source.bgra.data()+expected,4)==0,
+                    "Magnifier interpolated, shifted or dimmed a frozen source pixel");
+        }
+        if(point.x==160 && point.y==180) save_image(directory/(selected?L"magnifier-selected.png":L"magnifier-hover.png"),image);
+        previous=image;
+    }
+    GdiFlush();require(GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS)==drawing_objects,"Magnifier pointer updates leaked drawing resources");
+    SendMessageW(window,WM_MOUSELEAVE,0,0);
+    require(selector_window_image(window,previous).bgra==baseline.bgra,"Leaving capture retained magnifier pixels");
+    if(selected) {
+        SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(500,350));
+        SendMessageW(window,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(501,351));
+        SendMessageW(window,WM_LBUTTONUP,0,MAKELPARAM(501,351));
+        SendMessageW(window,WM_MOUSEMOVE,0,MAKELPARAM(700,450));const auto before=selector_window_image(window);
+        const RECT old_bounds=magnifier_bounds(before);
+        BYTE saved[256]{},keys[256]{};GetKeyboardState(saved);keys[VK_SHIFT]=0x80;SetKeyboardState(keys);
+        SendMessageW(window,WM_KEYDOWN,VK_RIGHT,0);const auto after=selector_window_image(window,before);
+        const RECT new_bounds=magnifier_bounds(after);
+        require(EqualRect(&old_bounds,&new_bounds),"Keyboard adjustment moved a safely placed magnifier");
+        bool label_changed=false;
+        for(LONG y=old_bounds.top+6+11*cell;y<old_bounds.bottom;++y) for(LONG x=old_bounds.left;x<old_bounds.right;++x) {
+            const auto i=(std::size_t(y)*900+x)*4;
+            label_changed=label_changed || std::memcmp(before.bgra.data()+i,after.bgra.data()+i,4)!=0;
+        }
+        require(label_changed,"Keyboard resize did not update live magnifier dimensions");
+        SendMessageW(window,WM_KEYDOWN,VK_DOWN,0);keys[VK_SHIFT]=0;keys[VK_CONTROL]=0x80;SetKeyboardState(keys);
+        SendMessageW(window,WM_KEYDOWN,VK_RIGHT,0);SendMessageW(window,WM_KEYDOWN,VK_DOWN,0);
+        keys[VK_CONTROL]=0;SetKeyboardState(keys);SendMessageW(window,WM_KEYDOWN,VK_RIGHT,0);SetKeyboardState(saved);
+        SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(436,378));
+    } else SendMessageW(window,WM_CLOSE,0,0);
+}
+void check_drag_magnifier(HWND window,int direction,const std::filesystem::path& directory) {
+    const LONG sx=direction==1 || direction==2?-1:1,sy=direction>=2?-1:1;
+    const POINT start{sx>0?100l:800l,sy>0?100l:500l};
+    POINT pointer=start;RECT previous{};
+    const auto check_panel=[&](RECT selection) {
+        const auto image=selector_window_image(window);RECT panel{};
+        try {panel=magnifier_bounds(image);} catch(...) {
+            std::cerr<<"DRAG_CONTEXT direction="<<direction<<" pointer="<<pointer.x<<","<<pointer.y
+                     <<" selection="<<selection.left<<","<<selection.top<<","<<selection.right<<","<<selection.bottom<<"\n";
+            save_image(directory/L"magnifier-drag-failed.png",image);throw;
+        }
+        const LONG dx=std::max({0l,panel.left-pointer.x,pointer.x-panel.right});
+        const LONG dy=std::max({0l,panel.top-pointer.y,pointer.y-panel.bottom});
+        require(dx<=24 && dy<=24,"Dragging left the magnifier behind the current pointer");
+
+        HDC dc=GetDC(window);require(dc!=nullptr,"Cannot inspect owned drag repaint");GdiFlush();
+        const POINT samples[]={{panel.left,panel.top},{panel.right-1,panel.bottom-1},{previous.left,previous.top},{previous.right-1,previous.bottom-1}};
+        for(const auto point:samples) if(point.x>=0 && point.y>=0 && point.x<900 && point.y<600) {
+            const auto i=(std::size_t(point.y)*900+point.x)*4;
+            const COLORREF expected=RGB(image.bgra[i+2],image.bgra[i+1],image.bgra[i]);
+            require(GetPixel(dc,point.x,point.y)==expected,"Visible drag repaint left an old magnifier or missed its current location");
+        }
+        ReleaseDC(window,dc);previous=panel;return image;
+    };
+    SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(start.x,start.y));
+    for(int step=1;step<=20;++step) {
+        pointer={start.x+sx*step*25,start.y+sy*step*16};
+        SendMessageW(window,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(pointer.x,pointer.y));
+        check_panel(normalize_rect(start,pointer));
+    }
+    for(int step=19;step>=5;--step) {
+        pointer={start.x+sx*step*25,start.y+sy*step*16};
+        SendMessageW(window,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(pointer.x,pointer.y));check_panel(normalize_rect(start,pointer));
+    }
+    for(int step=6;step<=20;++step) {
+        pointer={start.x+sx*step*25,start.y+sy*step*16};
+        SendMessageW(window,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(pointer.x,pointer.y));check_panel(normalize_rect(start,pointer));
+    }
+    RECT selection=normalize_rect(start,pointer);const RECT before_release=previous;
+    SendMessageW(window,WM_LBUTTONUP,0,MAKELPARAM(pointer.x,pointer.y));UpdateWindow(window);
+    save_image(directory/(L"magnifier-drag-"+std::to_wstring(direction)+L".png"),check_panel(selection));
+    require(EqualRect(&before_release,&previous),"Releasing a capture box changed the magnifier anchor");
+    if(direction==0) {
+        const std::pair<LONG,LONG> paths[]={{80,120},{416,448},{580,606}};
+        for(const auto& path:paths) {
+            RECT last_sweep{};
+            for(LONG x=path.first;x<=path.second;++x) {
+                pointer={x,250};SendMessageW(window,WM_MOUSEMOVE,0,MAKELPARAM(pointer.x,pointer.y));UpdateWindow(window);
+                const auto frame=check_panel(selection);
+                if(x==416 || x==432 || x==448)
+                    save_image(directory/(L"magnifier-free-"+std::to_wstring(x)+L".png"),frame);
+                if(valid_rect(last_sweep)) require(std::abs(previous.left-last_sweep.left)<=1 && std::abs(previous.top-last_sweep.top)<=1,
+                        "Magnifier teleported while cursor crossed the capture box");
+                last_sweep=previous;
+            }
+        }
+        pointer={start.x+sx*500,start.y+sy*320};
+    }
+    SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(pointer.x,pointer.y));
+    pointer.x+=sx*30;pointer.y+=sy*20;
+    SendMessageW(window,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(pointer.x,pointer.y));
+    selection=normalize_rect(start,pointer);check_panel(selection);
+    SendMessageW(window,WM_LBUTTONUP,0,MAKELPARAM(pointer.x,pointer.y));
+    POINT center{(selection.left+selection.right)/2,(selection.top+selection.bottom)/2};
+    SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(center.x,center.y));
+    pointer={center.x+15,center.y+10};OffsetRect(&selection,15,10);
+    SendMessageW(window,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(pointer.x,pointer.y));check_panel(selection);
+    SendMessageW(window,WM_LBUTTONUP,0,MAKELPARAM(pointer.x,pointer.y));
+    SendMessageW(window,WM_CLOSE,0,0);
+}
+constexpr UINT magnifier_probe_message=WM_APP+19;
+struct MagnifierProbe {const Image& source;bool selected;std::filesystem::path directory;std::exception_ptr failure;bool enabled;int drag_direction;};
+LRESULT CALLBACK magnifier_probe_proc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
+    if(message==magnifier_probe_message) {
+        auto& probe=*reinterpret_cast<MagnifierProbe*>(lp);
+        try {
+            if(probe.drag_direction>=0) check_drag_magnifier(window,probe.drag_direction,probe.directory);
+            else check_magnifier(window,probe.source,probe.selected,probe.directory,probe.enabled);
+        } catch(...) {probe.failure=std::current_exception();}
+        return 0;
+    }
+    return CallWindowProcW(reinterpret_cast<WNDPROC>(GetClassLongPtrW(window,GCLP_WNDPROC)),window,message,wp,lp);
+}
+void drive_magnifier(const Image& source,bool selected,const std::filesystem::path& directory,bool enabled=true,int drag_direction=-1) {
+    HWND window=nullptr;
+    for(unsigned i=0;i<500 && !window;++i) {
+        window=FindWindowW(L"LumenShotRegionSelector",nullptr);DWORD pid=0;
+        if(window) GetWindowThreadProcessId(window,&pid);
+        if(window && (pid!=GetCurrentProcessId() || !IsWindowVisible(window))) window=nullptr;
+        if(!window) Sleep(10);
+    }
+    require(window!=nullptr,"Magnifier selector did not open");
+    MagnifierProbe probe{source,selected,directory,{},enabled,drag_direction};
+    const auto previous=SetWindowLongPtrW(window,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(magnifier_probe_proc));
+    require(previous!=0,"Cannot attach owned magnifier probe");
+    SendMessageW(window,magnifier_probe_message,0,reinterpret_cast<LPARAM>(&probe));
+    SetWindowLongPtrW(window,GWLP_WNDPROC,previous);
+    if(probe.failure) {PostMessageW(window,WM_CLOSE,0,0);std::rethrow_exception(probe.failure);}
 }
 constexpr UINT tooltip_probe_message=WM_APP+17;
 struct TooltipProbe {POINT vertical,horizontal;bool edge;std::filesystem::path directory;std::exception_ptr failure;};
@@ -368,7 +541,60 @@ int wmain(int argc,wchar_t** argv) try {
         require(RegisterHotKey(nullptr,778,MOD_NOREPEAT,VK_ESCAPE)!=FALSE,"Selector retained Escape after closing");
         UnregisterHotKey(nullptr,778);
     }
-    std::cout<<checks<<" selector checks passed: HDR/SDR crop, annotations, sRGB DIBV5, nearby tooltips, edge flips, hover cleanup, owned drag/save/cancel.\n";
+    for(const RECT area:{RECT{0,0,3840,2160},RECT{-1920,-120,0,960},RECT{2560,400,4480,1480}}) {
+        for(const POINT pointer:{POINT{area.left,area.top},POINT{area.right-1,area.bottom-1},POINT{area.left+300,area.top+300}}) {
+            const auto panel=magnifier_rect(area,pointer,{144,148});
+            require(valid_rect(panel) && panel.left>=area.left && panel.top>=area.top && panel.right<=area.right && panel.bottom<=area.bottom,
+                    "Magnifier entered a virtual desktop gap or lost negative coordinates");
+        }
+    }
+    require(!valid_rect(magnifier_rect({0,0,40,40},{20,20},{144,148})),"Magnifier obscured an undersized capture");
+    const RECT panel_area{0,0,900,600};const SIZE panel_size{144,148};
+    RECT last=magnifier_rect(panel_area,{734,300},panel_size);
+    for(LONG x=735;x<=760;++x) {
+        const RECT next=magnifier_rect(panel_area,{x,300},panel_size);
+        require(next.left>=last.left && next.left<=last.left+1 && next.top==last.top,"Magnifier flipped sides at a monitor edge");
+        last=next;
+    }
+    last=magnifier_rect(panel_area,{450,430},panel_size);
+    for(LONG y=431;y<=460;++y) {
+        const RECT next=magnifier_rect(panel_area,{450,y},panel_size);
+        require(next.top>=last.top && next.top<=last.top+1 && next.left==last.left,"Magnifier flipped vertically at a monitor edge");
+        last=next;
+    }
+    Image grid;grid.width=900;grid.height=600;grid.bgra.resize(900*600*4);
+    for(unsigned y=0;y<600;++y) for(unsigned x=0;x<900;++x) {
+        const auto i=(std::size_t(y)*900+x)*4;
+        grid.bgra[i]=(x+y)%100+120;grid.bgra[i+1]=y%180+40;grid.bgra[i+2]=x%200+20;grid.bgra[i+3]=255;
+    }
+    for(int direction=0;direction<4;++direction) {
+        RegionSelector selector(grid);std::exception_ptr failure;NativeWork driver;
+        driver.start([&] {try {drive_magnifier(grid,false,directory,true,direction);} catch(...) {failure=std::current_exception();}});
+        const auto result=selector.run(nullptr,{80,80,980,680});driver.join();if(failure) std::rethrow_exception(failure);
+        require(result.action==SelectionAction::Cancel && selector.image().bgra==grid.bgra,"Magnifier dragging changed capture pixels or action");
+    }
+    {
+        RegionSelector selector(grid,false);std::exception_ptr failure;NativeWork driver;
+        driver.start([&] {try {drive_magnifier(grid,false,directory,false);} catch(...) {failure=std::current_exception();}});
+        const auto result=selector.run(nullptr,{80,80,980,680});driver.join();if(failure) std::rethrow_exception(failure);
+        require(result.action==SelectionAction::Cancel && selector.image().bgra==grid.bgra,"Disabled magnifier changed capture pixels or action");
+    }
+    for(bool selected:{false,true}) {
+        RegionSelector selector(grid);if(selected) selector.preview_selection({100,100,500,350});
+        std::exception_ptr failure;NativeWork driver;driver.start([&] {
+            try {drive_magnifier(grid,selected,directory);} catch(...) {failure=std::current_exception();}
+        });
+        const auto result=selector.run(nullptr,{80,80,980,680});driver.join();if(failure) std::rethrow_exception(failure);
+        require(selector.image().bgra==grid.bgra,"Magnifier modified exported source pixels");
+        if(selected) {
+            const RECT expected{102,101,503,352};
+            require(result.action==SelectionAction::Save && EqualRect(&result.rect,&expected),"One-pixel resize or arrow-key adjustment changed crop coordinates");
+            const auto cropped=crop_image(selector.image(),result.rect);
+            require(cropped.width==401 && cropped.height==251 && std::memcmp(cropped.bgra.data(),grid.bgra.data()+(101*900+102)*4,4)==0,
+                    "Magnifier or keyboard adjustment leaked overlay pixels into the crop");
+        } else require(result.action==SelectionAction::Cancel,"Magnifier hover changed the capture action");
+    }
+    std::cout<<checks<<" selector checks passed: HDR/SDR crop, annotations, sRGB DIBV5, tooltips, magnifier pixels/edges/repaint, keyboard dimensions, owned drag/save/cancel.\n";
     std::cout<<"System clipboard was not changed. Physical Print Screen was not simulated.\n";
     return 0;
 } catch(const std::exception& error) {std::cerr<<"FAILED after "<<checks<<" selector checks: "<<error.what()<<"\n";return 1;}
