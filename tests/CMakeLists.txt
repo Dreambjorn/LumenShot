@@ -22,6 +22,7 @@ hdrshot_test(hdr_output_tests image/hdr_output_tests.cpp "${evidence}/hdr_output
 hdrshot_test(multimonitor_tests capture/multimonitor_tests.cpp "${evidence}/multimonitor_tests")
 set_tests_properties(multimonitor_tests PROPERTIES TIMEOUT 30)
 hdrshot_test(startup_tests platform/startup_tests.cpp "${evidence}/startup_tests")
+hdrshot_test(diagnostics_tests platform/diagnostics_tests.cpp "${evidence}/diagnostics_tests")
 hdrshot_test(settings_autosave ui/settings_autosave.cpp "${evidence}/settings_autosave")
 hdrshot_test(platform_tests capture/platform_tests.cpp "${evidence}/fixtures")
 hdrshot_test(selector_tests ui/selector_tests.cpp "${evidence}/fixtures")
@@ -32,3 +33,8 @@ hdrshot_test(app_workflow app/app_workflow.cpp "${evidence}/workflow")
 get_filename_component(compiler_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
 add_test(NAME audit COMMAND ${CMAKE_COMMAND} -DEXECUTABLE=$<TARGET_FILE:LumenShot>
     -DOBJDUMP=${compiler_bin}/objdump.exe -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/src -P ${CMAKE_CURRENT_SOURCE_DIR}/audit.cmake)
+
+add_executable(pipeline_benchmark EXCLUDE_FROM_ALL app/pipeline_benchmark.cpp)
+target_link_libraries(pipeline_benchmark PRIVATE lumenshot_core)
+hdrshot_target(pipeline_benchmark)
+target_link_options(pipeline_benchmark PRIVATE -municode)

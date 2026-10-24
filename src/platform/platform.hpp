@@ -16,6 +16,7 @@
 #define _WIN32_WINNT 0x0A00
 #endif
 #include <windows.h>
+#include "platform/diagnostics.hpp"
 #include <windowsx.h>
 #include <wrl/client.h>
 #include <dxgi1_6.h>
@@ -51,7 +52,7 @@ inline std::string narrow(const std::wstring& text) {
 class PlatformError : public std::runtime_error {
 public:
     HRESULT code;
-    PlatformError(HRESULT value, const std::string& message) : std::runtime_error(message), code(value) {}
+    PlatformError(HRESULT value, const std::string& message) : std::runtime_error(message), code(value) {diagnostic_error(std::uint32_t(value));}
 };
 
 inline void check(HRESULT hr, const char* context) {

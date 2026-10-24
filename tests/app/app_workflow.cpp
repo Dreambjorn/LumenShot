@@ -32,12 +32,16 @@ int wmain(int argc,wchar_t** argv) try {
     auto expected=crop_image(render_sdr(frame,app.settings.color),{100,100,500,350});
     scale_image(expected,150,25);
     app.busy=true;
+    app.capture_diagnostics=std::make_shared<DiagnosticRecord>(DiagnosticSource::Synthetic);
+    {
+    DiagnosticContext diagnostics(app.capture_diagnostics);
     app.worker.start([&] {
         app.result={};app.result.frame=frame;
         prepare_preview(app.result,app.capture_settings);
         app.result.bounds={80,80,980,680};app.result.needs_selection=true;
         PostMessageW(window,done_message,0,0);
     });
+    }
     app.settings.folder=directory/L"future-output";
     app.settings.hdr_format=HdrFormat::UltraJpeg;app.settings.sharpness=80;app.settings.scale=200;
     NativeWork driver;
@@ -89,6 +93,20 @@ int wmain(int argc,wchar_t** argv) try {
         if(a.r!=half_to_float(float_to_half(b.r)) || a.g!=half_to_float(float_to_half(b.g)) || a.b!=half_to_float(float_to_half(b.b)))
             throw std::runtime_error("Selected JPEG XR lost the processed HDR values.");
     }
+    const auto diagnostic=app.capture_diagnostics->snapshot();
+    if(!diagnostic.success || diagnostic.selector_first_paint_ms<0 ||
+       !diagnostic.stages[std::size_t(DiagnosticStage::Preview)].calls ||
+       !diagnostic.stages[std::size_t(DiagnosticStage::Selection)].calls ||
+       !diagnostic.stages[std::size_t(DiagnosticStage::EncodePng)].calls ||
+       !diagnostic.stages[std::size_t(DiagnosticStage::EncodeJxr)].calls)
+        throw std::runtime_error("Capture diagnostics lost a workflow stage or first paint endpoint.");
+    unsigned reports=0;
+    for(const auto& entry:std::filesystem::directory_iterator(executable_directory()/L"Diagnostics")) {
+        if(entry.path().extension()!=L".json") throw std::runtime_error("Incomplete diagnostic report remains.");
+        ++reports;
+    }
+    if(reports!=1) throw std::runtime_error("Capture diagnostics were not saved exactly once.");
+    app.capture_diagnostics.reset();
     const auto future_folder=app.settings.folder;
     app.settings.color={ContentMode::Auto,203,.1,true};
     app.settings.hdr_format=HdrFormat::UltraJpeg;

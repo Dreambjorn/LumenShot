@@ -4,6 +4,7 @@ build/
 SHA256SUMS.txt
 LumenShot.ini
 Screenshots/
+Diagnostics/
 .vscode/
 
 # Local credentials, signing keys, and agent configuration.

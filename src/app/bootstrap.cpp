@@ -23,7 +23,7 @@ int run_application(HINSTANCE instance) {
         check(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED),"Cannot initialize application UI");
         struct Uninit{~Uninit(){CoUninitialize();}} uninit;
         INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_STANDARD_CLASSES};InitCommonControlsEx(&controls);
-        App app;
+        App app;app.diagnostics_enabled=options.diagnostics;
         WNDCLASSW wc{};wc.lpfnWndProc=window_proc;wc.hInstance=instance;wc.lpszClassName=window_class;
         wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);wc.hIcon=LoadIconW(instance,MAKEINTRESOURCEW(1));
         RegisterClassW(&wc);

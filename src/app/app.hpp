@@ -1,5 +1,6 @@
 #pragma once
 #include "app/workflow.hpp"
+#include "app/diagnostics.hpp"
 #include "platform/startup.hpp"
 #include "ui/theme.hpp"
 #include "ui/notices.hpp"
@@ -36,6 +37,8 @@ struct App {
     UINT registered_modifiers=0,registered_key=0;
     WorkResult result;
     std::wstring subtitle;
+    bool diagnostics_enabled=false;
+    std::shared_ptr<DiagnosticRecord> capture_diagnostics;
     ~App();
     HWND control(const wchar_t* type,const wchar_t* label,DWORD style,int id,int x,int y,int w,int h);
     void label(const wchar_t* value,int x,int y,int width);

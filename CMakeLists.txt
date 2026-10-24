@@ -25,6 +25,8 @@ function(hdrshot_target target)
 endfunction()
 
 add_library(lumenshot_core STATIC
+    src/platform/diagnostics.cpp
+    src/app/diagnostics.cpp
     src/app/settings.cpp
     src/app/workflow.cpp
     src/app/app.cpp

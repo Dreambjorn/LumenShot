@@ -18,6 +18,7 @@ inline void check_hdr_codec(uhdr_error_info_t result,const char* context) {
         throw std::runtime_error(std::string(context)+(result.has_detail?": "+std::string(result.detail):"."));
 }
 inline void save_hdr_jpeg(const std::filesystem::path& path,const Frame& source,const Image& base) {
+    DiagnosticTimer timing(DiagnosticStage::EncodeUltraHdr);
     const auto count=checked_pixels(source.width,source.height);
     if(!source.hdr || source.pixels.size()!=count) throw std::runtime_error("Invalid HDR image buffer.");
     if(source.width<8 || source.height<8)

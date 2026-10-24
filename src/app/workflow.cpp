@@ -18,6 +18,9 @@ CapturedInput capture_input(const Settings& settings,HMONITOR foreground) {
 }
 // Sharpening waits for the crop; a full-screen pass delayed the selector by over 100 ms.
 void prepare_preview(WorkResult& result,const Settings& settings,Image sdr) {
+    DiagnosticTimer timing(DiagnosticStage::Preview);
+    if(active_diagnostics) active_diagnostics->dimensions(result.frame.width,result.frame.height,result.frame.hdr,
+                                                         unsigned(result.frame.regions.size()));
     result.preview=sdr.bgra.empty()?render_sdr(result.frame,settings.color):std::move(sdr);
 }
 // Sharpening reads each neighbour, so a one-pixel margin keeps a crop equal to a full-image pass.

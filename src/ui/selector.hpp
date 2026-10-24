@@ -112,6 +112,7 @@ inline void draw_annotation(HDC dc,const Annotation& mark,POINT offset={},double
     SelectObject(dc,old_brush);SelectObject(dc,old_pen);DeleteObject(pen);
 }
 inline void annotate(Image& image,const std::vector<Annotation>& marks,POINT offset,double scale_x=1,double scale_y=1) {
+    DiagnosticTimer timing(DiagnosticStage::Annotation);
     if(marks.empty()) return;
     BITMAPINFO info{};
     info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
@@ -144,6 +145,7 @@ inline std::vector<std::uint8_t> clipboard_dib(const Image& image) {
     return data;
 }
 inline void copy_image(HWND owner,const Image& image) {
+    DiagnosticTimer timing(DiagnosticStage::Clipboard);
     const auto data=clipboard_dib(image);
     HGLOBAL block=GlobalAlloc(GMEM_MOVEABLE,data.size());
     if(!block) throw std::runtime_error("Cannot allocate clipboard image.");
@@ -540,7 +542,7 @@ class RegionSelector {
         if(!self) return DefWindowProcW(window,message,wp,lp);
         try {
             switch(message) {
-            case WM_PAINT: {PAINTSTRUCT paint{};HDC dc=BeginPaint(window,&paint);self->paint(dc);EndPaint(window,&paint);return 0;}
+            case WM_PAINT: {PAINTSTRUCT paint{};HDC dc=BeginPaint(window,&paint);self->paint(dc);EndPaint(window,&paint);diagnostic_paint();return 0;}
             case WM_ERASEBKGND:return 1;
             case WM_PRINTCLIENT:self->paint(reinterpret_cast<HDC>(wp));return 0;
             case WM_LBUTTONDOWN:self->mouse_down({GET_X_LPARAM(lp),GET_Y_LPARAM(lp)});return 0;
@@ -620,6 +622,7 @@ public:
         last_visual_=visual_bounds();
     }
     SelectionResult run(HWND,RECT screen_bounds) {
+        DiagnosticTimer timing(DiagnosticStage::Selection);
         WNDCLASSW wc{};wc.lpfnWndProc=proc;wc.hInstance=GetModuleHandleW(nullptr);
         wc.lpszClassName=class_name;wc.hCursor=LoadCursorW(nullptr,IDC_CROSS);
         if(!RegisterClassW(&wc) && GetLastError()!=ERROR_CLASS_ALREADY_EXISTS)

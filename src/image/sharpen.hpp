@@ -5,6 +5,7 @@
 namespace hdrshot {
 
 inline void sharpen_image(Image& image,unsigned strength) {
+    DiagnosticTimer timing(DiagnosticStage::Sharpen);
     const auto count=checked_pixels(image.width,image.height);
     if(image.bgra.size()!=count*4) throw std::runtime_error("Incomplete sharpening image.");
     if(strength>100) throw std::runtime_error("Sharpness must be between 0 and 100.");

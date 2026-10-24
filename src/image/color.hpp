@@ -284,6 +284,7 @@ struct RenderedRegion {
 // Converts one display's area of the frame in place, so monitors need no tile copies.
 inline RenderedRegion render_region(const Frame& frame, const FrameRegion& region, const ColorSettings& settings,
                                     bool use_lookup, Image& image) {
+    DiagnosticTimer timing(DiagnosticStage::ColorAnalysis);
     const std::size_t count = std::size_t(region.width) * region.height;
     const auto offset = [&](unsigned x, unsigned y) {
         return std::size_t(region.y + y) * frame.width + region.x + x;
@@ -313,6 +314,7 @@ inline RenderedRegion render_region(const Frame& frame, const FrameRegion& regio
         tone_peak = std::max(tone_peak, stats.tone_peak);
         wide_gamut = wide_gamut || stats.wide_gamut;
     }
+    timing.stop();
     RenderedRegion result;
     result.source_peak = luminance_peak * 80;
     const bool embedded_sdr = region.hdr && settings.mode == ContentMode::Auto
@@ -369,6 +371,8 @@ inline RenderedRegion render_region(const Frame& frame, const FrameRegion& regio
 }
 
 inline Image render_sdr(const Frame& frame, const ColorSettings& settings, bool use_lookup=true) {
+    DiagnosticTimer timing(DiagnosticStage::RenderSdr);
+    if(active_diagnostics) active_diagnostics->dimensions(frame.width,frame.height,frame.hdr,unsigned(frame.regions.size()));
     const auto count = checked_pixels(frame.width, frame.height);
     if (frame.pixels.size() != count) throw std::runtime_error("Incomplete capture frame.");
     if (!std::isfinite(settings.paper_white) || settings.paper_white < 40

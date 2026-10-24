@@ -101,6 +101,7 @@ inline std::wstring monitor_label(const Monitor& monitor) {
 }
 
 inline std::vector<Monitor> monitors() {
+    DiagnosticTimer timing(DiagnosticStage::Enumerate);
     ComPtr<IDXGIFactory1> factory;
     check(CreateDXGIFactory1(IID_PPV_ARGS(&factory)), "Cannot enumerate display adapters");
     std::vector<Monitor> result;
@@ -133,6 +134,7 @@ inline std::vector<Monitor> monitors() {
             result.push_back(monitor);
         }
     }
+    if(active_diagnostics) active_diagnostics->monitors(unsigned(result.size()));
     if (result.empty()) throw std::runtime_error("No active monitor was found.");
     return result;
 }
@@ -153,6 +155,7 @@ struct Device {
 
 // Creating a device takes about 100 ms, so captures reuse one per adapter.
 inline std::shared_ptr<Device> shared_device(IDXGIAdapter1* adapter) {
+    DiagnosticTimer timing(DiagnosticStage::Device);
     DXGI_ADAPTER_DESC1 desc{};
     check(adapter->GetDesc1(&desc), "Cannot read display adapter");
     static std::mutex lock;
@@ -160,6 +163,7 @@ inline std::shared_ptr<Device> shared_device(IDXGIAdapter1* adapter) {
     std::lock_guard<std::mutex> guard(lock);
     auto& device = devices[{desc.AdapterLuid.LowPart, desc.AdapterLuid.HighPart}];
     if (!device || device->device->GetDeviceRemovedReason() != S_OK) device = std::make_shared<Device>(adapter);
+    else diagnostic_count(DiagnosticCounter::DeviceReused);
     return device;
 }
 
@@ -176,6 +180,7 @@ inline const std::vector<float>& half_lookup() {
 inline Frame read_texture(Device& device, ID3D11Texture2D* texture, bool hdr,
                           double sdr_white, const std::wstring& backend,
                           unsigned crop_width = 0, unsigned crop_height = 0, Image* sdr = nullptr) {
+    DiagnosticTimer gpu_copy(DiagnosticStage::GpuCopy);
     D3D11_TEXTURE2D_DESC desc{};
     texture->GetDesc(&desc);
     const bool fp16 = desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
@@ -187,6 +192,9 @@ inline Frame read_texture(Device& device, ID3D11Texture2D* texture, bool hdr,
     frame.width = crop_width ? std::min(crop_width, desc.Width) : desc.Width;
     frame.height = crop_height ? std::min(crop_height, desc.Height) : desc.Height;
     frame.hdr = hdr; frame.sdr_white = sdr_white; frame.backend = backend;
+    if(active_diagnostics) active_diagnostics->frame({frame.width,frame.height,hdr,sdr_white,unsigned(desc.Format),
+        backend==L"Windows Graphics Capture"?DiagnosticBackend::Windows:
+        backend==L"Desktop Duplication"?DiagnosticBackend::Desktop:DiagnosticBackend::Unknown});
     if (sdr) *sdr = {};
     if (!bgra || hdr) sdr = nullptr;
     if (sdr) {
@@ -201,6 +209,8 @@ inline Frame read_texture(Device& device, ID3D11Texture2D* texture, bool hdr,
     device.context->CopyResource(staging.Get(), texture);
     D3D11_MAPPED_SUBRESOURCE mapped{};
     check(device.context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped), "Cannot read captured pixels");
+    gpu_copy.stop();
+    DiagnosticTimer decode(DiagnosticStage::DecodePixels);
     const auto& halves = half_lookup();
     const auto& bytes = srgb_lookup();
     for (unsigned y = 0; y < frame.height; ++y) {
@@ -315,12 +325,13 @@ inline void forget_capture_items() {
 
 inline ComPtr<CaptureAbi::IGraphicsCaptureItem> capture_item(IGraphicsCaptureItemInterop* interop,
                                                             const Monitor& monitor, bool& cached) {
+    DiagnosticTimer timing(DiagnosticStage::CaptureItem);
     auto& cache = capture_items();
     {
         std::lock_guard<std::mutex> guard(cache.lock);
         const auto found = cache.items.find(monitor.handle);
         cached = found != cache.items.end() && EqualRect(&found->second.first, &monitor.bounds);
-        if (cached) return found->second.second;
+        if (cached) {diagnostic_count(DiagnosticCounter::ItemReused);return found->second.second;}
     }
     ComPtr<CaptureAbi::IGraphicsCaptureItem> item;
     check(interop->CreateForMonitor(monitor.handle, IID_PPV_ARGS(&item)), "Cannot select capture monitor");
@@ -346,6 +357,7 @@ struct CaptureTimeout : std::runtime_error { using std::runtime_error::runtime_e
 
 inline Frame capture_item_frame(Device& device, Direct3DAbi::IDirect3DDevice* runtime_device,
                                 CaptureAbi::IGraphicsCaptureItem* item, const Monitor& monitor, Image* sdr) {
+    DiagnosticTimer session(DiagnosticStage::Session);
     ABI::Windows::Graphics::SizeInt32 size{};
     check(item->get_Size(&size), "Cannot read capture dimensions");
     if (size.Width <= 0 || size.Height <= 0) throw std::runtime_error("Capture target has no visible size.");
@@ -365,6 +377,8 @@ inline Frame capture_item_frame(Device& device, Direct3DAbi::IDirect3DDevice* ru
     if (SUCCEEDED(lifetime.session.As(&border_control)) && request_borderless_capture())
         border_control->put_IsBorderRequired(false);
     check(lifetime.session->StartCapture(), "Cannot begin Windows capture");
+    session.stop();
+    DiagnosticTimer fresh(DiagnosticStage::FreshFrame);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
     ComPtr<CaptureAbi::IDirect3D11CaptureFrame> frame;
     while (std::chrono::steady_clock::now() < deadline) {
@@ -373,6 +387,7 @@ inline Frame capture_item_frame(Device& device, Direct3DAbi::IDirect3DDevice* ru
         Sleep(10);
     }
     if (!frame) throw CaptureTimeout("Capture timed out. The game or Windows may exclude this content.");
+    fresh.stop();
     ABI::Windows::Graphics::SizeInt32 content{};
     check(frame->get_ContentSize(&content), "Cannot read frame dimensions");
     if (content.Width != size.Width || content.Height != size.Height)
@@ -391,6 +406,7 @@ inline Frame capture_item_frame(Device& device, Direct3DAbi::IDirect3DDevice* ru
 }
 
 inline Frame capture_wgc(const Monitor& monitor, HWND own_test_window = nullptr, Image* sdr = nullptr) {
+    DiagnosticTimer timing(DiagnosticStage::CaptureWindows);
     Runtime runtime;
     const auto shared = shared_device(monitor.adapter.Get());
     ComPtr<IDXGIDevice> dxgi;
@@ -412,14 +428,17 @@ inline Frame capture_wgc(const Monitor& monitor, HWND own_test_window = nullptr,
     catch (const std::exception&) {
         // A cached item can outlive its monitor; retry once with a fresh one.
         if (!cached) throw;
+        diagnostic_count(DiagnosticCounter::WindowsRetry);
         forget_capture_items();
         return capture_item_frame(*shared, runtime_device.Get(), capture_item(interop.Get(), monitor, cached).Get(), monitor, sdr);
     }
 }
 
 inline Frame capture_dxgi(const Monitor& monitor, Image* sdr = nullptr) {
+    DiagnosticTimer timing(DiagnosticStage::CaptureDesktop);
     const auto shared = shared_device(monitor.adapter.Get());
     Device& device = *shared;
+    DiagnosticTimer session(DiagnosticStage::Session);
     ComPtr<IDXGIOutput5> output;
     check(monitor.output.As(&output), "HDR-capable Desktop Duplication is unavailable");
     constexpr DXGI_FORMAT formats[] = {DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_B8G8R8A8_UNORM};
@@ -430,6 +449,8 @@ inline Frame capture_dxgi(const Monitor& monitor, Image* sdr = nullptr) {
     duplication->GetDesc(&desc);
     if (desc.Rotation != DXGI_MODE_ROTATION_IDENTITY && desc.Rotation != DXGI_MODE_ROTATION_UNSPECIFIED)
         throw std::runtime_error("Use Windows Graphics Capture for a rotated monitor.");
+    session.stop();
+    DiagnosticTimer fresh(DiagnosticStage::FreshFrame);
     DXGI_OUTDUPL_FRAME_INFO info{};
     ComPtr<IDXGIResource> resource;
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(3);
@@ -443,6 +464,7 @@ inline Frame capture_dxgi(const Monitor& monitor, Image* sdr = nullptr) {
         duplication->ReleaseFrame();resource.Reset();info={};
     }
     if (!acquired) throw PlatformError(DXGI_ERROR_WAIT_TIMEOUT,"Desktop capture unavailable or timed out");
+    fresh.stop();
     struct ReleaseFrame {
         IDXGIOutputDuplication* duplication;
         ~ReleaseFrame() { duplication->ReleaseFrame(); }
@@ -509,6 +531,7 @@ inline Frame capture(const Monitor& monitor, CaptureBackend backend, Image* sdr 
     if (backend == CaptureBackend::Desktop) return capture_dxgi(monitor, sdr);
     try { return capture_wgc(monitor, nullptr, sdr); }
     catch (const std::exception& wgc_error) {
+        diagnostic_count(DiagnosticCounter::BackendFallback);
         try { return capture_dxgi(monitor, sdr); }
         catch (const std::exception& dxgi_error) {
             throw std::runtime_error(std::string("Windows capture: ") + wgc_error.what()

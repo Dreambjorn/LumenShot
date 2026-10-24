@@ -93,6 +93,7 @@ void cas_resample(unsigned width,unsigned height,unsigned out_width,unsigned out
 }
 
 inline void scale_image(Image& image,unsigned percent,unsigned strength) {
+    DiagnosticTimer timing(DiagnosticStage::Scale);
     const auto [width,height]=scaled_size(image.width,image.height,percent);
     if(image.bgra.size()!=checked_pixels(image.width,image.height)*4 || strength>100)
         throw std::runtime_error("Invalid image scaling input.");
@@ -115,6 +116,7 @@ inline void scale_image(Image& image,unsigned percent,unsigned strength) {
 }
 
 inline void enhance_hdr(Frame& frame,unsigned percent,unsigned strength) {
+    DiagnosticTimer timing(DiagnosticStage::EnhanceHdr);
     const auto [width,height]=scaled_size(frame.width,frame.height,percent);
     if(!frame.hdr || frame.pixels.size()!=checked_pixels(frame.width,frame.height) || strength>100)
         throw std::runtime_error("Invalid HDR enhancement input.");

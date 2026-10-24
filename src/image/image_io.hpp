@@ -29,6 +29,7 @@ public:
     ~OutputTransaction() { if (!committed_) DeleteFileW(temporary_.c_str()); }
     const std::filesystem::path& path() const { return temporary_; }
     void commit() {
+        DiagnosticTimer timing(DiagnosticStage::Commit);
         if (!MoveFileExW(temporary_.c_str(), destination_.c_str(), MOVEFILE_WRITE_THROUGH))
             throw std::runtime_error("Cannot finish screenshot file without overwriting an existing image.");
         committed_ = true;
@@ -36,6 +37,7 @@ public:
 };
 
 inline void save_image(const std::filesystem::path& path, const Image& image) {
+    DiagnosticTimer timing(DiagnosticStage::EncodePng);
     const auto count = checked_pixels(image.width, image.height);
     if (image.bgra.size() != count * 4) throw std::runtime_error("Invalid SDR image buffer.");
     if (std::filesystem::exists(path)) throw std::runtime_error("Screenshot file already exists.");
@@ -71,6 +73,7 @@ inline void save_image(const std::filesystem::path& path, const Image& image) {
 }
 
 inline void save_master(const std::filesystem::path& path, const Frame& source) {
+    DiagnosticTimer timing(DiagnosticStage::EncodeJxr);
     const auto count = checked_pixels(source.width, source.height);
     if (source.pixels.size() != count) throw std::runtime_error("Invalid HDR image buffer.");
     if (std::filesystem::exists(path)) throw std::runtime_error("HDR original already exists.");

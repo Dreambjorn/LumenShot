@@ -70,7 +70,11 @@ void App::cancel_capture() {
 }
 
 void App::begin_work() {
-    if (busy || !flush_edits()) return;
+    if (busy) return;
+    const auto requested=diagnostics_enabled?DiagnosticRecord::Clock::now():DiagnosticRecord::Clock::time_point{};
+    if(!flush_edits()) return;
+    capture_diagnostics=diagnostics_enabled?std::make_shared<DiagnosticRecord>(DiagnosticSource::Live,requested):nullptr;
+    DiagnosticContext context(capture_diagnostics);
     KillTimer(window,countdown_timer); countdown=0;
     const HMONITOR foreground=MonitorFromWindow(GetForegroundWindow(),MONITOR_DEFAULTTOPRIMARY);
     busy=true;preparing=true;cancel_requested=false;capture_settings=settings;listen_for_escape();
@@ -90,6 +94,8 @@ void App::begin_work() {
 
 void App::finish_work() {
     if(!busy || !worker.joinable()) return;
+    const auto diagnostics=capture_diagnostics;
+    DiagnosticContext context(diagnostics);
     worker.join();busy=false;preparing=false;
     if(cancel_requested) {
         result={};result.success=true;result.canceled=true;result.status=L"Capture canceled";
@@ -147,6 +153,8 @@ void App::finish_work() {
         try {copy_image(window,result.clipboard);}
         catch(const std::exception& error) {result.success=false;result.status=L"Copy failed";result.details=widen(error.what())+L"\n\n"+result.details;}
     }
+    if(!save_capture_diagnostics(diagnostics,result.success,result.canceled))
+        result.details+=L"\nDiagnostics could not be saved.";
     set_status(result.status+(result.details.empty()?L"":L"\n\n"+result.details));
     if(!result.canceled)
         notify(result.success?L"Screenshot ready":L"Screenshot failed",result.success?result.status:result.details,

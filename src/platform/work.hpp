@@ -6,6 +6,7 @@
 #define _WIN32_WINNT 0x0A00
 #endif
 #include <windows.h>
+#include "platform/diagnostics.hpp"
 #include <functional>
 #include <stdexcept>
 #include <utility>
@@ -26,7 +27,12 @@ public:
     bool joinable() const { return work_ != nullptr; }
     void start(std::function<void()> function) {
         if (work_) throw std::runtime_error("Background work is already active.");
-        function_ = std::move(function);
+        if(active_diagnostics) {
+            auto record=active_diagnostics;const auto stage=active_diagnostic_stage;
+            function_=[record=std::move(record),stage,body=std::move(function)] {
+                DiagnosticContext context(record,stage);body();
+            };
+        } else function_ = std::move(function);
         work_ = CreateThreadpoolWork(run, this, nullptr);
         if (!work_) throw std::runtime_error("Cannot create background work.");
         SubmitThreadpoolWork(work_);
