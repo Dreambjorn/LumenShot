@@ -10,6 +10,7 @@
 #include <string>
 #include "platform/work.hpp"
 #include "image/hdr_analysis.hpp"
+#include "image/hdr_mask.hpp"
 #include <vector>
 
 namespace hdrshot {
@@ -44,6 +45,7 @@ struct ColorSettings {
     double exposure = 0;
     bool dither = true;
     PeakMethod peak_method = PeakMethod::Robust;
+    bool content_aware = true;
 };
 
 struct Image {
@@ -358,6 +360,19 @@ inline RenderedRegion render_region(const Frame& frame, const FrameRegion& regio
             measurement.effective_nits=tone_peak*80;measurement.reason=PeakReason::HighlightDetail;
         }
     }
+    HdrContentMask mask;
+    if(region.hdr && settings.mode==ContentMode::Auto && settings.content_aware) {
+        if(!std::isfinite(region.sdr_white) || region.sdr_white<40 || region.sdr_white>2000)
+            throw std::runtime_error("Invalid display reference white.");
+        if(wide_gamut || component_peak*80>region.sdr_white*1.01)
+            mask=analyze_content_mask(region.width,region.height,region.sdr_white,
+                [&](unsigned x,unsigned y)->const Pixel& {return frame.pixels[offset(x,y)];},
+                [](unsigned rows,const auto& body) {
+                    parallel_rows(rows,[&](unsigned,unsigned first,unsigned last) {body(first,last);});
+                });
+    }
+    if(active_diagnostics) active_diagnostics->mask({region.x,region.y,region.width,region.height,
+        mask.regions,mask.sdr_pixels,mask.blended_pixels});
     timing.stop();
     RenderedRegion result;
     result.source_peak = luminance_peak * 80;
@@ -374,6 +389,7 @@ inline RenderedRegion render_region(const Frame& frame, const FrameRegion& regio
     result.tone_mapped = !sdr && tone_peak * gain > 1.000001;
     result.description = !region.hdr ? L"SDR preserved"
         : sdr ? L"SDR normalization" : L"HDR to SDR";
+    if(mask.regions) result.description=L"HDR to SDR with preserved SDR regions";
     if(region.hdr && settings.mode==ContentMode::Auto) result.description+=L" (automatic estimate)";
     const ToneCurve curve(peak);
     const RenderLookup lookup(curve,peak,use_lookup && count>=65536,!sdr);
@@ -395,14 +411,20 @@ inline RenderedRegion render_region(const Frame& frame, const FrameRegion& regio
                     continue;
                 }
             }
+            const double amount=mask.amounts.empty()?1:mask.amounts[std::size_t(y)*region.width+x]/255.0;
             Rgb color = Rgb{p.r,p.g,p.b} * gain;
-            if (!sdr) {
+            if (!sdr && amount>0) {
                 // Compress in the source gamut before limiting colors to sRGB.
                 const Rgb wide = to_rec2020(color);
                 color = from_rec2020({lookup.map(wide.r),lookup.map(wide.g),lookup.map(wide.b)});
             }
+            if(!sdr && amount<1) {
+                const Rgb normalized=Rgb{p.r,p.g,p.b}*(80/region.sdr_white);
+                color={color.r*amount+normalized.r*(1-amount),color.g*amount+normalized.g*(1-amount),
+                       color.b*amount+normalized.b*(1-amount)};
+            }
             const double noise = settings.dither && !sdr
-                ? (bayer[(y % 4) * 4 + x % 4] / 16.0 - 0.46875) * 0.75 : 0;
+                ? (bayer[(y % 4) * 4 + x % 4] / 16.0 - 0.46875) * 0.75 * amount : 0;
             const auto quantize = [&](double v) {
                 return std::uint8_t(std::clamp(std::lround(lookup.encode(std::clamp(v,0.0,1.0))
                                                         * 255 + (v > 0 && v < 1 ? noise : 0)), 0l, 255l));

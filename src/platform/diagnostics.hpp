@@ -31,6 +31,7 @@ enum class DiagnosticSource { Live, Imported, Synthetic };
 enum class DiagnosticBackend { Unknown, Windows, Desktop };
 struct DiagnosticDuration { unsigned calls=0,failures=0;double sum_ms=0,max_ms=0; };
 struct DiagnosticFrame { unsigned width,height;bool hdr;double sdr_white;unsigned pixel_format;DiagnosticBackend backend; };
+struct DiagnosticMask { unsigned x,y,width,height,regions;std::uint64_t sdr_pixels,blended_pixels; };
 struct DiagnosticPeak { unsigned x,y,width,height;HdrPeakMeasurement measurement; };
 struct DiagnosticIssue { DiagnosticStage stage;std::uint32_t hresult; };
 struct DiagnosticSnapshot {
@@ -43,6 +44,7 @@ struct DiagnosticSnapshot {
     std::vector<DiagnosticFrame> frames;
     std::vector<DiagnosticIssue> issues;
     std::vector<DiagnosticPeak> peaks;
+    std::vector<DiagnosticMask> masks;
 };
 
 class DiagnosticRecord {
@@ -77,6 +79,13 @@ public:
             if(data_.frames.size()==64) {++data_.dropped;return;}
             if(!std::isfinite(value.sdr_white) || value.sdr_white<0) value.sdr_white=0;
             data_.frames.push_back(value);
+        } catch(...) {}
+    }
+    void mask(DiagnosticMask value) noexcept {
+        try {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if(data_.masks.size()==64) {++data_.dropped;return;}
+            data_.masks.push_back(value);
         } catch(...) {}
     }
     void peak(DiagnosticPeak value) noexcept {
@@ -186,6 +195,12 @@ inline std::string diagnostic_json(const DiagnosticSnapshot& value) {
            <<",\"percentile_nits\":"<<peak.percentile_nits<<",\"reference_white_nits\":"<<peak.reference_white
            <<",\"samples\":"<<peak.samples<<",\"hdr_samples\":"<<peak.hdr_samples
            <<",\"sample_step\":"<<peak.sample_step<<",\"percentile_per_mille\":"<<peak.percentile_per_mille<<",\"reason\":\""<<peak_reason_name(peak.reason)<<"\"}";
+    }
+    out<<"],\"masks\":[";
+    for(std::size_t i=0;i<value.masks.size();++i) {
+        const auto& mask=value.masks[i];if(i) out<<',';
+        out<<"{\"x\":"<<mask.x<<",\"y\":"<<mask.y<<",\"width\":"<<mask.width<<",\"height\":"<<mask.height
+           <<",\"sdr_regions\":"<<mask.regions<<",\"sdr_pixels\":"<<mask.sdr_pixels<<",\"blended_pixels\":"<<mask.blended_pixels<<'}';
     }
     out<<"],\"issues\":[";
     for(std::size_t i=0;i<value.issues.size();++i) {
