@@ -196,7 +196,7 @@ int wmain(int argc,wchar_t** argv) try {
                 PostMessageW(target,WM_LBUTTONUP,0,MAKELPARAM(x2,y2));
             };
             drag(100,100,500,350);
-            if(marked) {click(525,120);drag(150,150,300,150);}
+            if(marked) {click(525,20);drag(150,150,300,150);}
             click(433,376);
         });
         const auto jpeg_deadline=std::chrono::steady_clock::now()+std::chrono::seconds(15);
@@ -297,7 +297,7 @@ int wmain(int argc,wchar_t** argv) try {
                         PostMessageW(target,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(x,y));PostMessageW(target,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(right,bottom));
                         PostMessageW(target,WM_LBUTTONUP,0,MAKELPARAM(right,bottom));
                     };
-                    drag(100,100,500,350);click(525,120+(8+int(tool)-int(MarkTool::Redact))*32);drag(150,150,300,220);click(433,376);
+                    drag(100,100,500,350);click(525,20+(6+int(tool)-int(MarkTool::Redact))*32);drag(150,150,300,220);click(433,376);
                 });
                 const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(15);
                 while(app.busy && std::chrono::steady_clock::now()<deadline) {

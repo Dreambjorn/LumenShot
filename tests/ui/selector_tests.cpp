@@ -59,13 +59,13 @@ void drive_editor() {
         PostMessageW(target,WM_LBUTTONUP,0,MAKELPARAM(x2,y2));
     };
     draw(100,100,500,350);
-    click(525,184);draw(150,150,300,250);
-    click(525,344);
-    click(525,216);draw(200,170,350,280);
-    click(525,120);draw(130,130,200,190);
-    click(525,248);draw(140,300,300,300);
-    click(525,152);draw(150,200,250,250);
-    click(525,280);click(180,210);
+    click(525,84);draw(150,150,300,250);
+    click(525,340);
+    click(525,116);draw(200,170,350,280);
+    click(525,20);draw(130,130,200,190);
+    click(525,148);draw(140,300,300,300);
+    click(525,52);draw(150,200,250,250);
+    click(525,180);click(180,210);
     HWND edit=nullptr;
     for(int i=0;i<500 && !edit;++i) {edit=FindWindowExW(target,nullptr,L"EDIT",nullptr);if(!edit) Sleep(10);}
     if(edit) {
@@ -90,7 +90,7 @@ void drive_escape(int stage,bool& reached) {
         PostMessageW(target,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(100,100));
         PostMessageW(target,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(500,350));
         PostMessageW(target,WM_LBUTTONUP,0,MAKELPARAM(500,350));
-        const int button_y=stage==2?280:312;
+        const int button_y=stage==2?180:308;
         PostMessageW(target,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(525,button_y));
         if(stage==2) {
             PostMessageW(target,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(180,210));
@@ -130,8 +130,8 @@ void drive_adjustment(int stage,RECT expected,bool& annotation_tracks) {
         if(dc) ReleaseDC(target,dc);
     }
     SendMessageW(target,WM_LBUTTONUP,0,MAKELPARAM(end.x,end.y));
-    const LONG x=std::clamp(expected.right-134,0l,766l)+67;
-    const LONG y=(expected.bottom+45<=600?expected.bottom+7:std::max(0l,expected.top-45))+19;
+    const auto bars=selection_toolbars({0,0,900,600},expected);
+    const LONG x=bars.second.left+67,y=bars.second.top+19;
     PostMessageW(target,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(x,y));
 }
 Image selector_window_image(HWND window,const Image& previous={}) {
@@ -161,7 +161,7 @@ void check_tooltips(HWND window,POINT vertical,POINT horizontal,bool right_edge,
     const auto baseline=selector_window_image(window);auto previous=baseline;
     for(int index=0;index<14;++index) {
         const bool side=index<8 || index>=11;
-        const POINT point=side?POINT{vertical.x,vertical.y+(index>=11?index-3:index)*32}:POINT{horizontal.x+(index-8)*42,horizontal.y};
+        const POINT point=side?POINT{vertical.x,vertical.y+(index>=11?index-5:index>=6?index+3:index)*32}:POINT{horizontal.x+(index-8)*42,horizontal.y};
         const RECT button=side?RECT{point.x-15,point.y-16,point.x+15,point.y+16}
                                   :RECT{point.x-21,point.y-16,point.x+21,point.y+16};
         SendMessageW(window,WM_MOUSEMOVE,0,MAKELPARAM(point.x,point.y));
@@ -192,7 +192,9 @@ void check_tooltips(HWND window,POINT vertical,POINT horizontal,bool right_edge,
             const auto i=(std::size_t(y)*image.width+x)*4;
             if(std::memcmp(image.bgra.data()+i,baseline.bgra.data()+i,4))corner_unchanged=false;
         }
-        require(corner_unchanged,"Tooltip still uses the distant screen corner");
+        const RECT corner{10,10,250,55};RECT overlap{};
+        if(!IntersectRect(&overlap,&corner,&label) && !IntersectRect(&overlap,&corner,&button))
+            require(corner_unchanged,"Tooltip still uses the distant screen corner");
         if(index==0 || index==9)save_image(directory/((right_edge?L"edge-tooltip-":L"tooltip-")+std::to_wstring(index)+L".png"),image);
         previous=std::move(image);
     }
@@ -384,16 +386,16 @@ void check_privacy_input(HWND window,const std::filesystem::path& directory) {
         SendMessageW(window,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(right,bottom));
         SendMessageW(window,WM_LBUTTONUP,0,MAKELPARAM(right,bottom));
     };
-    click(525,376);draw(151,151,211,181);
+    click(525,212);draw(151,151,211,181);
     auto previous=selector_window_image(window);
     require(previous.bgra[(165*900+180)*4]==0 && previous.bgra[(165*900+180)*4+2]==0,"Redaction toolbar did not draw an opaque region");
     SendMessageW(window,WM_KEYDOWN,'B',0);draw(231,151,291,181);
     auto current=selector_window_image(window,previous);
     require(current.bgra==selector_window_image(window).bgra,"Blur preview depended on repaint damage");previous=current;
-    click(525,440);draw(311,151,371,181);current=selector_window_image(window,previous);
+    click(525,276);draw(311,151,371,181);current=selector_window_image(window,previous);
     require(current.bgra==selector_window_image(window).bgra,"Pixelation preview left stale repaint pixels");
     save_image(directory/L"privacy-tools.png",current);
-    click(525,344);current=selector_window_image(window,current);
+    click(525,340);current=selector_window_image(window,current);
     for(unsigned x=320;x<360;++x) {
         const auto i=(165*900+x)*4;
         require(current.bgra[i]==std::uint8_t((x+165)%100+120),"Undo did not restore pixelated source detail");
@@ -533,11 +535,43 @@ int wmain(int argc,wchar_t** argv) try {
     for(std::size_t i=0;i<tooltip_image.bgra.size();i+=4) {
         tooltip_image.bgra[i]=150;tooltip_image.bgra[i+1]=120;tooltip_image.bgra[i+2]=90;tooltip_image.bgra[i+3]=255;
     }
-    for(bool edge:{false,true}) {
-        RegionSelector selector(tooltip_image);selector.preview_selection(edge?RECT{450,100,830,350}:RECT{100,100,500,350});
+    unsigned toolbar_cases=0;
+    for(const RECT area:{RECT{0,0,640,480},RECT{0,0,3840,2160},RECT{-1920,-120,0,960},RECT{2560,400,4480,1480}})
+        for(const LONG width:{1l,8l,64l,134l,320l,area.right-area.left})
+            for(const LONG height:{1l,8l,38l,180l,360l,area.bottom-area.top})
+                for(const LONG x:{area.left,area.left+1,(area.left+area.right-width)/2,area.right-width-1,area.right-width})
+                    for(const LONG y:{area.top,area.top+1,(area.top+area.bottom-height)/2,area.bottom-height-1,area.bottom-height}) {
+                        const RECT selection{x,y,x+width,y+height};
+                        const auto bars=selection_toolbars(area,selection);RECT overlap{};
+                        for(const RECT bar:{bars.first,bars.second})
+                            require(bar.left>=area.left && bar.top>=area.top && bar.right<=area.right && bar.bottom<=area.bottom,
+                                    "Toolbar left its monitor at an edge, corner, tiny, or full-screen selection");
+                        require(!IntersectRect(&overlap,&bars.first,&bars.second),"Toolbar buttons overlap at a screen edge");
+                        require(bars.first.right-bars.first.left==36 && bars.first.bottom-bars.first.top==360
+                                && bars.second.right-bars.second.left==134 && bars.second.bottom-bars.second.top==38,
+                                "An edge clipped toolbar buttons");
+                        ++toolbar_cases;
+                    }
+    const RECT regular{200,200,700,550};const auto regular_bars=selection_toolbars({0,0,1200,900},regular);
+    require(regular_bars.first.left==707 && regular_bars.first.bottom==550 && regular_bars.second.right==700
+            && regular_bars.second.top==557,"Toolbars must share the selection's bottom-right anchor");
+    auto moved=regular;OffsetRect(&moved,10,12);const auto moved_bars=selection_toolbars({0,0,1200,900},moved);
+    require(moved_bars.first.left==regular_bars.first.left+10 && moved_bars.first.top==regular_bars.first.top+12
+            && moved_bars.second.left==regular_bars.second.left+10 && moved_bars.second.top==regular_bars.second.top+12,
+            "Moving a selection detached a toolbar from its corner");
+    const RECT toolbar_selections[]={{100,100,500,350},{450,100,830,350},{0,0,900,600},{0,0,1,1},{899,0,900,1},
+        {0,599,1,600},{899,599,900,600},{150,0,650,180},{150,420,650,600},{0,120,160,480},{740,120,900,480},
+        {250,0,300,600},{0,250,900,280},{0,0,900,480},{0,0,600,600}};
+    unsigned toolbar_scenario=0;
+    for(const RECT selection:toolbar_selections) {
+        RegionSelector selector(tooltip_image);selector.preview_selection(selection);
+        const auto bars=selection_toolbars({0,0,900,600},selection);
+        const auto scenario=directory/(L"toolbar-"+std::to_wstring(toolbar_scenario++));std::filesystem::create_directories(scenario);
+        save_image(scenario/L"layout.png",render_selector(selector,900,600));
         std::exception_ptr failure;
         NativeWork driver;driver.start([&] {
-            try{drive_tooltips(edge?POINT{855,120}:POINT{525,120},edge?POINT{721,376}:POINT{391,376},edge,directory);}
+            try{drive_tooltips({bars.first.left+18,bars.first.top+20},{bars.second.left+25,bars.second.top+19},
+                               bars.first.right>850,scenario);}
             catch(...){failure=std::current_exception();}
             HWND target=FindWindowW(L"LumenShotRegionSelector",nullptr);DWORD pid=0;if(target)GetWindowThreadProcessId(target,&pid);
             if(target && pid==GetCurrentProcessId())PostMessageW(target,WM_CLOSE,0,0);
@@ -546,6 +580,7 @@ int wmain(int argc,wchar_t** argv) try {
         if(failure)std::rethrow_exception(failure);
         require(selector.image().bgra==tooltip_image.bgra,"Hover labels modified the screenshot source");
     }
+    std::cout<<toolbar_cases<<" toolbar geometry scenarios and "<<toolbar_scenario<<" native button/tooltip layouts passed.\n";
     BYTE saved_keys[256]{};GetKeyboardState(saved_keys);BYTE neutral[256]{};SetKeyboardState(neutral);
     struct RestoreKeys{BYTE* keys;~RestoreKeys(){SetKeyboardState(keys);}} restore{saved_keys};
     for(bool save:{false,true}) {

@@ -2,6 +2,7 @@
 #include "image/color.hpp"
 #include "ui/window_snap.hpp"
 #include "ui/magnifier.hpp"
+#include "ui/selection_toolbars.hpp"
 #include "image/privacy.hpp"
 #include <commdlg.h>
 #include <windowsx.h>
@@ -281,14 +282,8 @@ class RegionSelector {
             }
         }
         // A virtual desktop can contain gaps where no toolbar is visible.
-        const LONG preferred=selection_.right+43<=area.right?selection_.right+7:selection_.left-43;
-        const LONG x=std::clamp(preferred,area.left,std::max(area.left,area.right-36));
-        const LONG y=std::clamp(selection_.top,area.top,std::max(area.top,area.bottom-vertical_buttons*32-8));
-        vertical_={x,y,x+36,y+vertical_buttons*32+8};
-        const LONG bx=std::clamp(selection_.right-3*42-8,area.left,std::max(area.left,area.right-3*42-8));
-        const LONG below=selection_.bottom+45<=area.bottom?selection_.bottom+7:selection_.top-45;
-        const LONG by=std::clamp(below,area.top,std::max(area.top,area.bottom-38));
-        horizontal_={bx,by,bx+3*42+8,by+38};
+        const auto bars=selection_toolbars(area,selection_);
+        vertical_=bars.first;horizontal_=bars.second;
         hint_bounds_={};
         if(!hint_.empty() && hover_>=0) {
             HDC dc=GetDC(window_);
@@ -339,7 +334,7 @@ class RegionSelector {
     }
     RECT button_bounds(int index) const {
         if(index<8 || index>=11) {
-            const int slot=index>=11?index-3:index;
+            const int slot=selection_tool_slot(index);
             return {vertical_.left+3,vertical_.top+4+slot*32,vertical_.right-3,vertical_.top+4+(slot+1)*32};
         }
         const int i=index-8;
@@ -348,7 +343,7 @@ class RegionSelector {
     int hit_button(POINT p) const {
         if(!valid_rect(selection_)) return -1;
         if(PtInRect(&vertical_,p)) {
-            const int slot=std::clamp(int((p.y-vertical_.top-4)/32),0,vertical_buttons-1);return slot<8?slot:slot+3;
+            const int slot=std::clamp(int((p.y-vertical_.top-4)/32),0,vertical_buttons-1);return selection_tool_order[slot];
         }
         if(PtInRect(&horizontal_,p)) return 8+std::clamp(int((p.x-horizontal_.left-4)/42),0,2);
         return -1;
@@ -636,9 +631,9 @@ class RegionSelector {
         HBRUSH face_brush=CreateSolidBrush(face),edge=CreateSolidBrush(RGB(150,150,150));
         FillRect(dc,&bounds,face_brush);FrameRect(dc,&bounds,edge);
         for(int i=0;i<(vertical?vertical_buttons:3);++i) {
-            const int index=vertical?(i<8?i:i+3):i+8;
+            const int index=vertical?selection_tool_order[i]:i+8;
             RECT r=button_bounds(index);
-            const bool active=vertical && ((i<6 && int(tool_)==i+1) || (i>=8 && int(tool_)==int(MarkTool::Redact)+i-8));
+            const bool active=vertical && ((index<6 && int(tool_)==index+1) || (index>=11 && int(tool_)==int(MarkTool::Redact)+index-11));
             const COLORREF background=active?pressed:index==hover_?hover:face;
             if(background!=face) {
                 HBRUSH fill=CreateSolidBrush(background);
