@@ -1,5 +1,7 @@
-#include "../src/main.cpp"
+#include "app/app.hpp"
 #include <iostream>
+
+using namespace hdrshot;
 
 static unsigned checks=0;
 void require(bool value,const char* message){++checks;if(!value)throw std::runtime_error(message);}

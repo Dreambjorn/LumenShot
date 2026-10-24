@@ -1,6 +1,6 @@
 #pragma once
-#include "platform.hpp"
-#include "color.hpp"
+#include "platform/platform.hpp"
+#include "image/color.hpp"
 #include <wincodec.h>
 #include <fstream>
 

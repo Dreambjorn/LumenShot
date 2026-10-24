@@ -8,7 +8,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
-#include "work.hpp"
+#include "platform/work.hpp"
 #include <vector>
 
 namespace hdrshot {

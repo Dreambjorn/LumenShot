@@ -1,4 +1,4 @@
-#include "../src/hdr_output.hpp"
+#include "image/hdr_output.hpp"
 #include <iostream>
 #include <iterator>
 

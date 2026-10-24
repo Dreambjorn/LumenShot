@@ -1,6 +1,8 @@
-#include "../src/main.cpp"
+#include "app/app.hpp"
 #include <iostream>
 #include <atomic>
+
+using namespace hdrshot;
 
 static unsigned checks=0;
 void require(bool condition,const char* message) {++checks;if(!condition) throw std::runtime_error(message);}

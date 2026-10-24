@@ -1,5 +1,5 @@
 #pragma once
-#include "image_io.hpp"
+#include "image/image_io.hpp"
 #include <ultrahdr_api.h>
 
 // This product includes Gain Map technology under license by Adobe.

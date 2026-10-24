@@ -1,5 +1,5 @@
-#include "../src/capture.hpp"
-#include "../src/image_io.hpp"
+#include "capture/capture.hpp"
+#include "image/image_io.hpp"
 #include <iostream>
 #include <atomic>
 #include <thread>

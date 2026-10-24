@@ -1,6 +1,6 @@
 #pragma once
-#include "platform.hpp"
-#include "color.hpp"
+#include "platform/platform.hpp"
+#include "image/color.hpp"
 // mingw-w64 14 headers define IReference<boolean> twice because boolean is BYTE; it is unused here.
 #define ____FIReference_1_boolean_INTERFACE_DEFINED__
 #include <windows.graphics.capture.interop.h>

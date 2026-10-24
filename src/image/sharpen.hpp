@@ -1,5 +1,5 @@
 #pragma once
-#include "color.hpp"
+#include "image/color.hpp"
 
 // Copyright (c) 2017-2019 Advanced Micro Devices, Inc.; see FidelityFX-CAS-MIT.txt.
 namespace hdrshot {

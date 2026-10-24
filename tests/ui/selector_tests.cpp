@@ -1,5 +1,5 @@
-#include "../src/image_io.hpp"
-#include "../src/selector.hpp"
+#include "image/image_io.hpp"
+#include "ui/selector.hpp"
 #include <iostream>
 #include <exception>
 

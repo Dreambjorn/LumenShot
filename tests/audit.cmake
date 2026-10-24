@@ -22,7 +22,7 @@ if(dump MATCHES "${forbidden}")
     message(FATAL_ERROR "Executable imports a forbidden API: ${CMAKE_MATCH_0}")
 endif()
 # OpenProcess is imported by the static winpthreads runtime, so only the sources are checked for it.
-file(GLOB sources "${SOURCE_DIR}/*.cpp" "${SOURCE_DIR}/*.hpp" "${SOURCE_DIR}/*.rc" "${SOURCE_DIR}/*.manifest")
+file(GLOB_RECURSE sources "${SOURCE_DIR}/*.cpp" "${SOURCE_DIR}/*.hpp" "${SOURCE_DIR}/*.h" "${SOURCE_DIR}/*.rc" "${SOURCE_DIR}/*.manifest")
 foreach(source IN LISTS sources)
     file(READ "${source}" text)
     if(text MATCHES "OpenProcess|${forbidden}")

@@ -24,7 +24,19 @@ function(hdrshot_target target)
         windowscodecs ole32 oleaut32 uuid user32 gdi32 shell32 comctl32 comdlg32 advapi32 dwmapi uxtheme)
 endfunction()
 
+add_library(lumenshot_core STATIC
+    src/app/settings.cpp
+    src/app/workflow.cpp
+    src/app/app.cpp
+    src/app/command_line.cpp
+    src/app/bootstrap.cpp
+    src/ui/settings_window.cpp)
+hdrshot_target(lumenshot_core)
+target_compile_features(lumenshot_core PUBLIC cxx_std_17)
+target_include_directories(lumenshot_core PUBLIC "${CMAKE_SOURCE_DIR}/src" "${uhdr_include}")
+
 add_executable(LumenShot WIN32 src/main.cpp src/app.rc "${HDRSHOT_NOTICES_RC}")
+target_link_libraries(LumenShot PRIVATE lumenshot_core)
 hdrshot_target(LumenShot)
 target_link_options(LumenShot PRIVATE -s -municode)
 

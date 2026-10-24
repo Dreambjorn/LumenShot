@@ -1,5 +1,5 @@
-#include "../src/sharpen.hpp"
-#include "../src/image_io.hpp"
+#include "image/sharpen.hpp"
+#include "image/image_io.hpp"
 #include <iostream>
 
 using namespace hdrshot;

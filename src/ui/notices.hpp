@@ -1,5 +1,5 @@
 #pragma once
-#include "theme.hpp"
+#include "ui/theme.hpp"
 #include "resource_ids.h"
 
 namespace hdrshot {

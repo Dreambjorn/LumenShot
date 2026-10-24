@@ -1,5 +1,5 @@
 #pragma once
-#include "color.hpp"
+#include "image/color.hpp"
 #include <commdlg.h>
 #include <windowsx.h>
 #include <initializer_list>

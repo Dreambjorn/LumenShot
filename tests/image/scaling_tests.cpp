@@ -1,6 +1,6 @@
-#include "../src/hdr_output.hpp"
-#include "../src/scaling.hpp"
-#include "../src/selector.hpp"
+#include "image/hdr_output.hpp"
+#include "image/scaling.hpp"
+#include "ui/selector.hpp"
 #include <iostream>
 
 using namespace hdrshot;

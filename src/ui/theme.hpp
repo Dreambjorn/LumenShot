@@ -1,5 +1,5 @@
 #pragma once
-#include "platform.hpp"
+#include "platform/platform.hpp"
 #include <commctrl.h>
 #include <dwmapi.h>
 #include <uxtheme.h>

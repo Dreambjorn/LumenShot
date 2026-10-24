@@ -1,5 +1,5 @@
 #pragma once
-#include "sharpen.hpp"
+#include "image/sharpen.hpp"
 
 // Copyright (c) 2017-2019 Advanced Micro Devices, Inc.; see FidelityFX-CAS-MIT.txt.
 namespace hdrshot {

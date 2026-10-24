@@ -1,5 +1,5 @@
 #pragma once
-#include "platform.hpp"
+#include "platform/platform.hpp"
 
 namespace hdrshot {
 

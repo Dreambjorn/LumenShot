@@ -1,5 +1,8 @@
-#include "../src/main.cpp"
+#include "app/app.hpp"
 #include <iostream>
+#include "image/scaling.hpp"
+
+using namespace hdrshot;
 
 int wmain(int argc,wchar_t** argv) try {
     if(argc!=2) throw std::runtime_error("Specify an owned application evidence directory.");

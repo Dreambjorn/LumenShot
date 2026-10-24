@@ -1,4 +1,4 @@
-#include "../src/color.hpp"
+#include "image/color.hpp"
 #include <iostream>
 #include <functional>
 
