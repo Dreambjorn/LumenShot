@@ -72,6 +72,18 @@ int wmain(int argc,wchar_t** argv) try {
         require(!load_settings().annotate_hdr,"Invalid preference enabled HDR drawings");
     }
     require(WritePrivateProfileStringW(L"Screenshot",L"AnnotateHdr",nullptr,config_path().c_str()),"Cannot remove owned HDR annotation preference");
+    require(Settings{}.hdr_jpeg_quality==HdrJpegQuality::Full && load_settings().hdr_jpeg_quality==HdrJpegQuality::Full,
+            "Existing and fresh settings must retain full JPEG quality");
+    for(unsigned index=0;index<4;++index) {
+        require(WritePrivateProfileStringW(L"Screenshot",L"HdrJpegQuality",std::to_wstring(index).c_str(),config_path().c_str()),"Cannot seed JPEG quality");
+        require(load_settings().hdr_jpeg_quality==HdrJpegQuality(index),"Saved JPEG quality was not restored");
+    }
+    for(const wchar_t* invalid:{L"-1",L"4",L"4294967295",L"nan"}) {
+        require(WritePrivateProfileStringW(L"Screenshot",L"HdrJpegQuality",invalid,config_path().c_str()),"Cannot seed invalid JPEG quality");
+        require(load_settings().hdr_jpeg_quality==HdrJpegQuality::Full,"Invalid JPEG quality reduced fidelity");
+    }
+    require(WritePrivateProfileStringW(L"Screenshot",L"HdrJpegQuality",nullptr,config_path().c_str()),"Cannot remove owned JPEG quality");
+    require(load_settings().hdr_jpeg_quality==HdrJpegQuality::Full,"Legacy settings reduced JPEG quality");
     App app;app.startup=StartupRegistration(key);app.settings=Settings{};
     app.settings.folder=std::filesystem::path(argv[1]);app.settings.key=VK_F9;app.settings.modifiers=MOD_CONTROL|MOD_SHIFT|MOD_ALT;
     INITCOMMONCONTROLSEX common{sizeof(common),ICC_STANDARD_CLASSES};InitCommonControlsEx(&common);
@@ -206,11 +218,28 @@ int wmain(int argc,wchar_t** argv) try {
     choose(ContentChoice,1);
     require(load_settings().color.mode==ContentMode::Hdr,"Explicit HDR content choice was not preserved");
     app.show_page(OutputPage);
+    HWND quality=GetDlgItem(window,HdrJpegQualityChoice),quality_label=GetDlgItem(window,HdrJpegQualityLabel);
+    require(IsWindowVisible(quality) && IsWindowVisible(quality_label),"JPEG quality is missing from Output");
+    for(unsigned index=0;index<4;++index) {
+        choose(HdrJpegQualityChoice,index);
+        require(app.settings.hdr_jpeg_quality==HdrJpegQuality(index) && load_settings().hdr_jpeg_quality==HdrJpegQuality(index),
+                "JPEG quality required manual saving");
+    }
+    app.capture_settings=app.settings;app.busy=true;app.set_status(L"Capturing...");choose(HdrJpegQualityChoice,1);
+    require(app.settings.hdr_jpeg_quality==HdrJpegQuality::High && load_settings().hdr_jpeg_quality==HdrJpegQuality::High
+            && app.capture_settings.hdr_jpeg_quality==HdrJpegQuality::Compact,"JPEG quality changed an in-flight capture");
+    require(text(app.status)==L"Capturing...","JPEG quality saving obscured capture status");app.busy=false;
     choose(HdrFormatChoice,1);require(load_settings().hdr_format==HdrFormat::JpegXr,"HDR format required manual saving");
+    require(!IsWindowVisible(quality) && !IsWindowVisible(quality_label),"JPEG XR exposed JPEG quality controls");
+    require(load_settings().hdr_jpeg_quality==HdrJpegQuality::High,"JPEG XR discarded the JPEG quality preference");
     toggle(KeepOriginal,false);require(!load_settings().keep_original && !IsWindowVisible(GetDlgItem(window,HdrFormatChoice)),"HDR retention required manual saving");
+    require(!IsWindowVisible(quality) && !IsWindowVisible(quality_label),"Disabled HDR saving exposed JPEG quality");
     require(!IsWindowVisible(GetDlgItem(window,HdrAnnotationChoice)) && !IsWindowVisible(GetDlgItem(window,HdrPrivacyLabel)),
             "HDR annotation controls remained visible with HDR saving disabled");
     toggle(KeepOriginal,true);choose(HdrFormatChoice,0);
+    require(IsWindowVisible(quality) && IsWindowVisible(quality_label) && SendMessageW(quality,CB_GETCURSEL,0,0)==1,
+            "Returning to JPEG lost its quality preference");
+    choose(HdrJpegQualityChoice,0);
     require(IsWindowVisible(GetDlgItem(window,HdrAnnotationChoice)),"HDR drawing choice did not return with HDR saving");
     choose(HdrAnnotationChoice,1);
     require(app.settings.annotate_hdr && load_settings().annotate_hdr,"Annotated HDR choice did not save automatically");

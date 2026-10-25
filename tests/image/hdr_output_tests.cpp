@@ -5,12 +5,12 @@
 using namespace hdrshot;
 static unsigned checks=0;
 void require(bool value,const char* message) {++checks;if(!value) throw std::runtime_error(message);}
-void verify_low_peak(const std::filesystem::path& directory,float value,unsigned index) {
+void verify_low_peak(const std::filesystem::path& directory,float value,unsigned index,HdrJpegQuality quality) {
     Frame source;source.width=source.height=16;source.hdr=true;source.sdr_white=203;
     source.pixels.assign(256,Pixel{value,value,value,1});
     ColorSettings settings;settings.mode=ContentMode::Hdr;settings.dither=false;
     const auto path=directory/(L"low-peak-"+std::to_wstring(index)+L".jpg");
-    save_hdr_jpeg(path,source,render_sdr(source,settings));
+    save_hdr_jpeg(path,source,render_sdr(source,settings),quality);
     std::ifstream input(path,std::ios::binary);
     std::string bytes((std::istreambuf_iterator<char>(input)),{});
     uhdr_codec_private_t* decoder=uhdr_create_decoder();require(decoder!=nullptr,"Cannot inspect low-peak HDR JPEG");
@@ -112,6 +112,42 @@ int wmain(int argc,wchar_t** argv) try {
         std::cout<<"SDR_PATCH "<<patch<<" Oklab distance "<<distance<<"\n";
         require(distance<.01,"Color-managed SDR fallback differs from PNG appearance");
     }
+    const auto frozen=source.pixels;
+    std::uintmax_t previous_size=bytes.size();
+    for(unsigned index=0;index<4;++index) {
+        const auto sample_path=directory/(L"quality-"+std::to_wstring(index)+L".jpg");
+        save_hdr_jpeg(sample_path,source,expected_sdr,HdrJpegQuality(index));
+        std::ifstream sample_input(sample_path,std::ios::binary);
+        std::string sample_bytes((std::istreambuf_iterator<char>(sample_input)),{});
+        if(index==0) require(sample_bytes==bytes,"Explicit full quality changed the existing JPEG output");
+        else require(sample_bytes.size()<previous_size,"JPEG preset did not reduce the encoded patch fixture size");
+        previous_size=sample_bytes.size();
+        require(!std::memcmp(source.pixels.data(),frozen.data(),frozen.size()*sizeof(Pixel)),"JPEG quality modified source HDR pixels");
+        uhdr_reset_decoder(decoder);
+        compressed.data=sample_bytes.data();compressed.data_sz=compressed.capacity=sample_bytes.size();
+        check_hdr_codec(uhdr_dec_set_image(decoder,&compressed),"Cannot read JPEG quality fixture");
+        check_hdr_codec(uhdr_dec_set_out_img_format(decoder,UHDR_IMG_FMT_64bppRGBAHalfFloat),"Cannot select quality HDR decoding");
+        check_hdr_codec(uhdr_dec_set_out_color_transfer(decoder,UHDR_CT_LINEAR),"Cannot select quality linear decoding");
+        check_hdr_codec(uhdr_dec_set_out_max_display_boost(decoder,10000.0f/203),"Cannot select quality HDR headroom");
+        check_hdr_codec(uhdr_dec_probe(decoder),"Cannot inspect JPEG quality fixture");
+        require(uhdr_dec_get_gainmap_width(decoder)==int(source.width) && uhdr_dec_get_gainmap_height(decoder)==int(source.height),
+                "JPEG quality downscaled HDR detail");
+        const auto* quality_metadata=uhdr_dec_get_gainmap_metadata(decoder);
+        require(quality_metadata && std::abs(quality_metadata->hdr_capacity_max-1000.0/203)<.01,"JPEG quality changed peak metadata");
+        check_hdr_codec(uhdr_decode(decoder),"Cannot decode JPEG quality fixture");
+        const auto* quality_image=uhdr_get_decoded_image(decoder);
+        require(quality_image && quality_image->cg==UHDR_CG_BT_2100 && quality_image->w==129 && quality_image->h==97,
+                "JPEG quality lost image dimensions or wide gamut");
+        const auto* quality_pixels=static_cast<const std::uint16_t*>(quality_image->planes[0]);
+        for(unsigned patch=0;patch<6;++patch) {
+            const unsigned x=(patch%3)*43+21,y=(patch/3)*49+24;
+            const auto offset=(std::size_t(y)*quality_image->stride[0]+x)*4;
+            const double target[]={expected[patch].r,expected[patch].g,expected[patch].b};
+            for(unsigned channel=0;channel<3;++channel)
+                require(std::abs(half_to_float(quality_pixels[offset+channel])-target[channel])<std::max(.01,target[channel]*.08),
+                        "JPEG quality exceeded HDR patch reconstruction tolerance");
+        }
+    }
     save_master(directory/L"source.jxr",source);
     bool rejected=false;try {save_hdr_jpeg(path,source,expected_sdr);}catch(const std::exception&){rejected=true;}
     require(rejected && std::filesystem::file_size(path)==bytes.size(),"HDR export overwrote an existing file");
@@ -125,12 +161,13 @@ int wmain(int argc,wchar_t** argv) try {
         require(rejected && !std::filesystem::exists(invalid_path),"Mismatched preview produced an HDR file");
     }
     unsigned low_peak_index=0;
-    for(float value:{0.0f,.01f,1.0f,2.5375f,2.55f}) verify_low_peak(directory,value,low_peak_index++);
+    for(unsigned quality=0;quality<4;++quality) for(float value:{0.0f,.01f,1.0f,2.5375f,2.55f})
+        verify_low_peak(directory,value,low_peak_index++,HdrJpegQuality(quality));
     source.pixels[0].r=std::numeric_limits<float>::quiet_NaN();
     rejected=false;try {save_hdr_jpeg(directory/L"invalid.jpg",source,expected_sdr);}catch(const std::exception&){rejected=true;}
     require(rejected && !std::filesystem::exists(directory/L"invalid.jpg"),"Invalid source produced an HDR file");
     for(const auto& entry:std::filesystem::directory_iterator(directory))
         require(entry.path().filename().wstring().find(L".writing-")==std::wstring::npos,"Incomplete HDR file left behind");
-    std::cout<<checks<<" HDR output checks passed: dual gain metadata, low HDR peaks, 80-to-203-nit scale, wide gamut, SDR fallback, odd crop, and file safety.\n";
+    std::cout<<checks<<" HDR output checks passed: four quality presets, dual gain metadata, low HDR peaks, 80-to-203-nit scale, wide gamut, SDR fallback, odd crop, and file safety.\n";
     return 0;
 } catch(const std::exception& error) {std::cerr<<"HDR output failed after "<<checks<<" checks: "<<error.what()<<"\n";return 1;}

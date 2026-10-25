@@ -44,7 +44,7 @@ WorkResult process_output(const Settings& settings,const Frame& frame,const Imag
             const auto originals=settings.folder/L"HDR images";
             std::filesystem::create_directories(originals);
             const auto destination=originals/(name+(settings.annotate_hdr?L"-annotated":L"")+(jpeg?L".jpg":L".jxr"));
-            if(jpeg) save_hdr_jpeg(destination,frame,hdr_base?*hdr_base:converted);
+            if(jpeg) save_hdr_jpeg(destination,frame,hdr_base?*hdr_base:converted,settings.hdr_jpeg_quality);
             else if(imported.empty() || settings.sharpness || settings.scale!=100) save_master(destination,frame);
             else copy_master(imported,destination,frame.width,frame.height);
             original=destination;

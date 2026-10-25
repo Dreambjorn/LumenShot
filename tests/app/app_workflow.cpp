@@ -160,6 +160,7 @@ int wmain(int argc,wchar_t** argv) try {
     for(const auto& [scale,sharpness]:options) for(bool marked:{false,true}) for(bool annotated:{false,true}) {
         const auto suffix=std::to_wstring(scale)+L"-"+std::to_wstring(sharpness)+(annotated?L"-annotated":L"-original");
         app.settings.folder=directory/((marked?L"jpeg-marked-":L"jpeg-unmarked-")+suffix);
+        app.settings.hdr_jpeg_quality=HdrJpegQuality(scale==100?0:scale==125?1:scale==150?2:3);
         app.settings.sharpness=sharpness;app.settings.scale=scale;app.settings.annotate_hdr=annotated;app.capture_settings=app.settings;
         Image expected_png;
         if(scale==100) {
@@ -176,7 +177,7 @@ int wmain(int argc,wchar_t** argv) try {
             annotate_hdr(processed_hdr,marks,{100,100},sx,sy,app.settings.color.paper_white);
             annotate(expected_png,marks,{100,100},sx,sy);
         }
-        save_hdr_jpeg(reference_jpeg,processed_hdr,expected_png);
+        save_hdr_jpeg(reference_jpeg,processed_hdr,expected_png,app.settings.hdr_jpeg_quality);
         const auto reference_bytes=file_bytes(reference_jpeg);
         app.busy=true;
         app.worker.start([&] {
@@ -278,6 +279,7 @@ int wmain(int argc,wchar_t** argv) try {
                 const auto suffix=std::to_wstring(int(format))+L"-"+std::to_wstring(scale)+L"-"+std::to_wstring(int(tool))+L"-"+std::to_wstring(variant)+(annotated?L"-annotated":L"-original");
                 app.settings.folder=directory/(L"privacy-"+suffix);app.settings.hdr_format=format;
                 app.settings.scale=scale;app.settings.sharpness=35;app.settings.keep_original=true;app.settings.annotate_hdr=annotated;
+                app.settings.hdr_jpeg_quality=HdrJpegQuality((scale==125?2:0)+(annotated?1:0));
                 app.settings.color.peak_nits=4000;app.capture_settings=app.settings;
                 Frame private_frame=frame;
                 for(unsigned y=150;y<=220;++y) for(unsigned x=150;x<=300;++x) {
@@ -351,7 +353,7 @@ int wmain(int argc,wchar_t** argv) try {
                 ++privacy_exports;
             }
         }
-    std::cout<<privacy_exports<<" privacy workflows passed: native tools, immutable captures, scaled/sharpened PNG, HDR JPEG fallback/reconstruction, and JPEG XR; covered-secret variants encode identically.\n";
+    std::cout<<privacy_exports<<" privacy workflows passed: native tools, immutable captures, scaled/sharpened PNG, all JPEG qualities, HDR fallback/reconstruction, and JPEG XR; covered-secret variants encode identically.\n";
     app.settings.folder=future_folder;
     app.busy=true;app.preparing=true;app.listen_for_escape();
     app.worker.start([&] {

@@ -57,3 +57,8 @@ target_link_options(hdr_mask_benchmark PRIVATE -municode)
 
 add_executable(dxgi_probe EXCLUDE_FROM_ALL capture/dxgi_probe.cpp)
 hdrshot_target(dxgi_probe)
+
+add_executable(hdr_quality_benchmark EXCLUDE_FROM_ALL image/hdr_quality_benchmark.cpp)
+target_link_libraries(hdr_quality_benchmark PRIVATE lumenshot_core)
+hdrshot_target(hdr_quality_benchmark)
+target_link_options(hdr_quality_benchmark PRIVATE -municode)

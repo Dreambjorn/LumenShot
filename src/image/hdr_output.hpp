@@ -7,6 +7,16 @@
 namespace hdrshot {
 
 enum class HdrFormat { UltraJpeg, JpegXr };
+enum class HdrJpegQuality { Full, High, Balanced, Compact };
+
+inline int hdr_jpeg_quality(HdrJpegQuality quality) {
+    switch(quality) {
+    case HdrJpegQuality::High: return 95;
+    case HdrJpegQuality::Balanced: return 90;
+    case HdrJpegQuality::Compact: return 85;
+    default: return 100;
+    }
+}
 
 inline Rgb to_bt2020(Rgb color) {
     return {.627404*color.r+.329282*color.g+.043314*color.b,
@@ -64,7 +74,8 @@ inline void validate_hdr_jpeg(const std::filesystem::path& path,unsigned width,u
     if(bytes.find("hdrgm:Version")==std::string::npos || bytes.find("urn:iso:std:iso:ts:21496:-1")==std::string::npos)
         throw std::runtime_error("HDR JPEG output is missing gain map metadata variants.");
 }
-inline void save_hdr_jpeg(const std::filesystem::path& path,const Frame& source,const Image& base) {
+inline void save_hdr_jpeg(const std::filesystem::path& path,const Frame& source,const Image& base,
+                          HdrJpegQuality quality=HdrJpegQuality::Full) {
     DiagnosticTimer timing(DiagnosticStage::EncodeUltraHdr);
     const auto count=checked_pixels(source.width,source.height);
     if(!source.hdr || source.pixels.size()!=count) throw std::runtime_error("Invalid HDR image buffer.");
@@ -108,8 +119,9 @@ inline void save_hdr_jpeg(const std::filesystem::path& path,const Frame& source,
     sdr_image.planes[0]=sdr.data();
     check_hdr_codec(uhdr_enc_set_raw_image(encoder,&hdr_image,UHDR_HDR_IMG),"Cannot supply HDR pixels");
     check_hdr_codec(uhdr_enc_set_raw_image(encoder,&sdr_image,UHDR_SDR_IMG),"Cannot supply SDR fallback");
-    check_hdr_codec(uhdr_enc_set_quality(encoder,100,UHDR_BASE_IMG),"Cannot set JPEG quality");
-    check_hdr_codec(uhdr_enc_set_quality(encoder,100,UHDR_GAIN_MAP_IMG),"Cannot set HDR detail quality");
+    const int requested_quality=hdr_jpeg_quality(quality);
+    check_hdr_codec(uhdr_enc_set_quality(encoder,requested_quality,UHDR_BASE_IMG),"Cannot set JPEG quality");
+    check_hdr_codec(uhdr_enc_set_quality(encoder,requested_quality,UHDR_GAIN_MAP_IMG),"Cannot set HDR detail quality");
     check_hdr_codec(uhdr_enc_set_gainmap_scale_factor(encoder,1),"Cannot retain full-size HDR detail");
     check_hdr_codec(uhdr_enc_set_using_multi_channel_gainmap(encoder,1),"Cannot retain HDR color detail");
     check_hdr_codec(uhdr_enc_set_preset(encoder,UHDR_USAGE_BEST_QUALITY),"Cannot set HDR encoding quality");

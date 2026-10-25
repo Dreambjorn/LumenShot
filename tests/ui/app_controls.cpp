@@ -71,7 +71,7 @@ int wmain() try {
     const std::pair<int,std::vector<int>> groups[]={
         {CapturePage,{MonitorChoice,BackendChoice,ModifierCtrl,ModifierShift,ModifierAlt,KeyChoice,ShowMagnifier,WindowSnapping}},
         {ImagePage,{ContentChoice,PeakNits,PaperWhite,Exposure,ImageSize,Sharpness}},
-        {OutputPage,{ControlId::Folder,Browse,KeepOriginal,HdrFormatChoice,HdrAnnotationChoice,HdrAnnotationLabel,HdrPrivacyLabel}},
+        {OutputPage,{ControlId::Folder,Browse,KeepOriginal,HdrFormatChoice,HdrAnnotationChoice,HdrAnnotationLabel,HdrPrivacyLabel,HdrJpegQualityChoice,HdrJpegQualityLabel}},
         {GeneralPage,{DarkMode,StartWithWindows,LicensesButton}}};
     const wchar_t* titles[]={L"Capture",L"Image",L"Output",L"General"};
     for(const auto& group:groups) {
@@ -160,6 +160,10 @@ int wmain() try {
     require(format && SendMessageW(format,CB_GETCOUNT,0,0)==2,"HDR format choices are missing");
     require(SendMessageW(format,CB_GETCURSEL,0,0)==0,"Recommended HDR JPEG is not the default");
     require(IsWindowVisible(format),"Enabled HDR copy must show its format dropdown");
+    HWND quality=GetDlgItem(settings,HdrJpegQualityChoice);
+    require(quality && IsWindowVisible(quality) && SendMessageW(quality,CB_GETCOUNT,0,0)==4
+            && SendMessageW(quality,CB_GETCURSEL,0,0)==0,"JPEG quality choices or full-quality default are incorrect");
+    require(text(GetDlgItem(settings,HdrJpegQualityLabel))==L"JPEG quality","JPEG quality label is unclear");
     SendDlgItemMessageW(settings,KeepOriginal,BM_SETCHECK,BST_UNCHECKED,0);
     SendMessageW(settings,WM_COMMAND,KeepOriginal,0);
     require(!IsWindowVisible(format),"Disabled HDR copy must hide its format dropdown");
@@ -196,7 +200,7 @@ int wmain() try {
     require(app.busy,"Hotkey did not start a screenshot request");
     require(IsWindowVisible(settings),"Hotkey hid the open settings window");
     for(int id: {ControlId::Folder,Browse,MonitorChoice,BackendChoice,ContentChoice,PaperWhite,Exposure,KeepOriginal,
-                 ModifierCtrl,ModifierShift,ModifierAlt,KeyChoice,CaptureButton,SaveButton,FolderButton,ExitButton,HdrFormatChoice,StartWithWindows,DarkMode,SettingsTabs,Sharpness,SharpnessValue,ImageSize,LicensesButton,ShowMagnifier,WindowSnapping,PeakNits})
+                 ModifierCtrl,ModifierShift,ModifierAlt,KeyChoice,CaptureButton,SaveButton,FolderButton,ExitButton,HdrFormatChoice,StartWithWindows,DarkMode,SettingsTabs,Sharpness,SharpnessValue,ImageSize,LicensesButton,ShowMagnifier,WindowSnapping,PeakNits,HdrJpegQualityChoice})
         require(IsWindowEnabled(GetDlgItem(settings,id)),"Capture disabled a settings control");
     require(GetFocus()==content,"Capture moved focus away from the open dropdown");
     require(SendMessageW(content,CB_GETDROPPEDSTATE,0,0),"Capture closed the open dropdown before freezing it");
