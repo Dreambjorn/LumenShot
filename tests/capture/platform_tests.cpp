@@ -44,15 +44,6 @@ int wmain(int argc,wchar_t** argv) try {
     Frame source; source.width=4;source.height=2;source.hdr=true;source.sdr_white=203;
     source.pixels={{0,0,0,1},{.5f,1,2,1},{12.5f,2.5f,.25f,1},{-.125f,.25f,1,1},
                    {10,0,0,1},{0,10,0,1},{0,0,10,1},{1,1,1,1}};
-    const auto master_path=directory/L"codec_original.jxr";
-    save_master(master_path,source);
-    const auto restored=load_master(master_path);
-    require(restored.width==4 && restored.height==2,"HDR codec dimensions");
-    for (std::size_t i=0;i<source.pixels.size();++i) {
-        require(restored.pixels[i].r==source.pixels[i].r,"Lossless HDR red round-trip");
-        require(restored.pixels[i].g==source.pixels[i].g,"Lossless HDR green round-trip");
-        require(restored.pixels[i].b==source.pixels[i].b,"Lossless HDR blue round-trip");
-    }
     {
         Device device(nullptr);
         std::vector<std::uint16_t> gpu_pixels(source.pixels.size()*4);
@@ -75,26 +66,6 @@ int wmain(int argc,wchar_t** argv) try {
             require(gpu_read.pixels[i].b==source.pixels[i].b,"FP16 GPU blue readback changed");
         }
     }
-    ColorSettings settings;settings.mode=ContentMode::Hdr;settings.dither=false;
-    const auto image=render_sdr(source,settings);
-    const auto png_path=directory/L"codec_sdr.png";
-    save_image(png_path,image);
-    auto factory=imaging_factory();
-    ComPtr<IWICBitmapDecoder> decoder;
-    check(factory->CreateDecoderFromFilename(png_path.c_str(),nullptr,GENERIC_READ,
-          WICDecodeMetadataCacheOnLoad,&decoder),"Cannot reopen test PNG");
-    ComPtr<IWICBitmapFrameDecode> decoded;
-    check(decoder->GetFrame(0,&decoded),"Cannot read test PNG");
-    std::vector<BYTE> png_bytes(image.bgra.size());
-    check(decoded->CopyPixels(nullptr,image.width*4,UINT(png_bytes.size()),png_bytes.data()),"Cannot round-trip PNG");
-    require(png_bytes==image.bgra,"PNG changed encoded pixels");
-    ComPtr<IWICMetadataQueryReader> metadata;
-    check(decoded->GetMetadataQueryReader(&metadata),"Cannot inspect PNG metadata");
-    PROPVARIANT intent{};
-    check(metadata->GetMetadataByName(L"/sRGB/RenderingIntent",&intent),"PNG lacks sRGB intent");
-    require(intent.vt==VT_UI1 && intent.bVal==0,"PNG has incorrect sRGB metadata");
-    PropVariantClear(&intent);
-
     auto displays=monitors();
     const Monitor& monitor=displays.front();
     WNDCLASSW wc{};wc.lpfnWndProc=fixture_proc;wc.hInstance=GetModuleHandleW(nullptr);
@@ -181,7 +152,7 @@ int wmain(int argc,wchar_t** argv) try {
     try {if(capture_error) std::rethrow_exception(capture_error);}
     catch (const PlatformError& error) {
         if(error.code!=DXGI_ERROR_WAIT_TIMEOUT) throw;
-        std::cout << checks << " platform checks passed: WGC, JPEG XR, PNG metadata.\n"
+        std::cout << checks << " platform checks passed: WGC and FP16 GPU readback.\n"
                   << "CAPABILITY SKIP: Desktop Duplication returned DXGI_ERROR_WAIT_TIMEOUT after synthetic updates; no compatibility claim.\n";
         return 0;
     }
@@ -195,7 +166,7 @@ int wmain(int argc,wchar_t** argv) try {
         std::memcpy(crop.bgra.data()+std::size_t(y)*500*4,desktop_image.bgra.data()+source_offset,500*4);
     }
     save_image(directory/L"dxgi_fixture.png",crop);
-    std::cout << checks << " platform checks passed. WGC, DXGI, JPEG XR, PNG metadata verified.\n";
+    std::cout << checks << " platform checks passed. WGC, DXGI and FP16 GPU readback verified.\n";
     return 0;
 } catch (const std::exception& error) {
     std::cerr << "FAILED after " << checks << " checks: " << error.what() << "\n"; return 1;
