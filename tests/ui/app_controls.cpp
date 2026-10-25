@@ -6,6 +6,15 @@ using namespace hdrshot;
 
 static unsigned checks=0;
 void require(bool condition,const char* message) {++checks;if(!condition) throw std::runtime_error(message);}
+static unsigned size_queries=0;
+static LRESULT CALLBACK constrained_window_proc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
+    // Model the hosted runner's desktop without changing display settings.
+    if(message==WM_GETMINMAXINFO) {
+        auto* limits=reinterpret_cast<MINMAXINFO*>(lp);
+        limits->ptMaxTrackSize={1024,768};++size_queries;
+    }
+    return window_proc(window,message,wp,lp);
+}
 static void record_license_window(HWND window,const wchar_t* name) {
     RECT rect{};GetClientRect(window,&rect);
     BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
@@ -32,7 +41,7 @@ int wmain() try {
     struct FinishCom {~FinishCom(){CoUninitialize();}} finish;
     INITCOMMONCONTROLSEX common{sizeof(common),ICC_STANDARD_CLASSES};InitCommonControlsEx(&common);
     App app;app.settings.monitor=L"*";app.settings.key=VK_F9;app.settings.modifiers=MOD_CONTROL|MOD_SHIFT|MOD_ALT;
-    WNDCLASSW wc{};wc.lpfnWndProc=window_proc;wc.hInstance=GetModuleHandleW(nullptr);
+    WNDCLASSW wc{};wc.lpfnWndProc=constrained_window_proc;wc.hInstance=GetModuleHandleW(nullptr);
     wc.lpszClassName=L"LumenShotControlsFixture";RegisterClassW(&wc);
     constexpr DWORD settings_style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;
     RECT settings_bounds{0,0,settings_width,settings_height};
@@ -40,6 +49,7 @@ int wmain() try {
     HWND settings=CreateWindowExW(0,wc.lpszClassName,L"Owned screenshot controls",settings_style,
         100,100,settings_bounds.right-settings_bounds.left,settings_bounds.bottom-settings_bounds.top,nullptr,nullptr,wc.hInstance,&app);
     require(settings!=nullptr,"Cannot create owned settings");
+    require(size_queries>0,"Small-desktop size constraint was not exercised");
     struct CloseSettings {HWND value;~CloseSettings(){DestroyWindow(value);}} close{settings};
     // Match the application's initial hidden ShowWindow call.
     ShowWindow(settings,SW_HIDE);
@@ -86,6 +96,8 @@ int wmain() try {
             require(IsWindowVisible(GetDlgItem(settings,id)) && IsWindowEnabled(GetDlgItem(settings,id)),"Shared action disappeared when changing tabs");
     }
     RECT client{};GetClientRect(settings,&client);
+    if(client.right!=settings_width || client.bottom!=settings_height)
+        std::cerr<<"Owned client size: "<<client.right<<" x "<<client.bottom<<"; expected "<<settings_width<<" x "<<settings_height<<"\n";
     require(client.right==settings_width && client.bottom==settings_height,"Owned fixture does not match production client size");
     app.show_page(OutputPage);
     std::vector<RECT> visible;

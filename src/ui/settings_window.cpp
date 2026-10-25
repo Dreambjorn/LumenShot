@@ -436,6 +436,17 @@ void App::browse() {
 }
 
 LRESULT CALLBACK window_proc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
+    // Windows can clamp the fixed layout before WM_NCCREATE on small desktops.
+    if(message==WM_GETMINMAXINFO) {
+        RECT bounds{0,0,settings_width,settings_height};
+        if(AdjustWindowRectEx(&bounds,DWORD(GetWindowLongPtrW(window,GWL_STYLE)),FALSE,
+                              DWORD(GetWindowLongPtrW(window,GWL_EXSTYLE)))) {
+            auto* limits=reinterpret_cast<MINMAXINFO*>(lp);
+            limits->ptMaxTrackSize.x=std::max(limits->ptMaxTrackSize.x,bounds.right-bounds.left);
+            limits->ptMaxTrackSize.y=std::max(limits->ptMaxTrackSize.y,bounds.bottom-bounds.top);
+            return 0;
+        }
+    }
     App* app=reinterpret_cast<App*>(GetWindowLongPtrW(window,GWLP_USERDATA));
     if (message==WM_NCCREATE) {
         app=static_cast<App*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams);
