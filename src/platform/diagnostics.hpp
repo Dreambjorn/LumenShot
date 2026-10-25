@@ -19,11 +19,11 @@ namespace hdrshot {
 
 enum class DiagnosticStage { Enumerate, Device, CaptureItem, Session, FreshFrame, GpuCopy, DecodePixels,
     CaptureWindows, CaptureDesktop, Preview, ColorAnalysis, RenderSdr, Scale, Sharpen, EnhanceHdr,
-    Selection, Annotation, EncodePng, EncodeJxr, EncodeUltraHdr, Validate, Commit, Clipboard, Count };
+    Selection, Annotation, EncodePng, EncodeJxr, EncodeUltraHdr, EncodeAvif, Validate, Commit, Clipboard, Count };
 inline constexpr const char* diagnostic_stage_names[]={"enumerate","device","capture_item","session",
     "fresh_frame","gpu_copy","decode_pixels","capture_windows","capture_desktop","preview","color_analysis",
     "render_sdr","scale","sharpen","enhance_hdr","selection","annotation","encode_png","encode_jxr",
-    "encode_ultra_hdr","validate","commit","clipboard"};
+    "encode_ultra_hdr","encode_avif","validate","commit","clipboard"};
 inline constexpr std::size_t diagnostic_stage_count=std::size(diagnostic_stage_names);
 static_assert(diagnostic_stage_count==std::size_t(DiagnosticStage::Count));
 enum class DiagnosticCounter { DeviceReused, ItemReused, WindowsRetry, BackendFallback, Count };

@@ -42,3 +42,36 @@ ExternalProject_Add(libultrahdr
 ExternalProject_Get_Property(libultrahdr SOURCE_DIR BINARY_DIR)
 set(uhdr_include "${SOURCE_DIR}")
 set(uhdr_library "${BINARY_DIR}/libuhdr.a")
+
+ExternalProject_Add(libaom
+    URL https://storage.googleapis.com/aom-releases/libaom-3.15.2.tar.gz
+    URL_HASH SHA256=67BB54B245F33ED98600E08269E6139986E48114E14042474DDD8885801DFDDC
+    DOWNLOAD_NAME libaom-3.15.2.tar.gz
+    DOWNLOAD_DIR "${downloads}"
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    CMAKE_ARGS ${codec_args} -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER} -DBUILD_SHARED_LIBS=OFF
+        -DAOM_TARGET_CPU=generic -DCONFIG_RUNTIME_CPU_DETECT=0 -DCONFIG_LIBYUV=0 -DCONFIG_WEBM_IO=0
+        -DENABLE_DOCS=OFF -DENABLE_APPS=OFF -DENABLE_EXAMPLES=OFF -DENABLE_TESTS=OFF -DENABLE_TESTDATA=OFF -DENABLE_TOOLS=OFF
+    BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target aom --parallel 4
+    INSTALL_COMMAND ""
+    BUILD_BYPRODUCTS <BINARY_DIR>/libaom.a)
+ExternalProject_Get_Property(libaom SOURCE_DIR BINARY_DIR)
+set(aom_include "${SOURCE_DIR}")
+set(aom_library "${BINARY_DIR}/libaom.a")
+
+ExternalProject_Add(libavif
+    DEPENDS libaom
+    URL https://codeload.github.com/AOMediaCodec/libavif/tar.gz/refs/tags/v1.4.2
+    URL_HASH SHA256=2B645287340BA5A631D268B551DC2D72BD73AC33335962DD36DCDB6D8366921D
+    DOWNLOAD_NAME libavif-v1.4.2.tar.gz
+    DOWNLOAD_DIR "${downloads}"
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    CMAKE_ARGS ${codec_args} -DBUILD_SHARED_LIBS=OFF -DAVIF_CODEC_AOM=SYSTEM
+        -DAOM_LIBRARY=${aom_library} -DAOM_INCLUDE_DIR=${aom_include}
+        -DAVIF_LIBYUV=OFF -DAVIF_LIBSHARPYUV=OFF -DAVIF_BUILD_APPS=OFF -DAVIF_BUILD_EXAMPLES=OFF -DAVIF_BUILD_TESTS=OFF
+    BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target avif_static --parallel 4
+    INSTALL_COMMAND ""
+    BUILD_BYPRODUCTS <BINARY_DIR>/libavif.a)
+ExternalProject_Get_Property(libavif SOURCE_DIR BINARY_DIR)
+set(avif_include "${SOURCE_DIR}/include")
+set(avif_library "${BINARY_DIR}/libavif.a")

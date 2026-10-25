@@ -44,9 +44,14 @@ Settings load_settings() {
     settings.dark_mode=value(L"DarkMode",1)!=0;
     settings.show_magnifier=value(L"ShowMagnifier",0)!=0;
     settings.window_snapping=value(L"WindowSnapping",0)!=0;
-    settings.hdr_format=value(L"HdrFormat",0)==1?HdrFormat::JpegXr:HdrFormat::UltraJpeg;
+    const auto format=ini_string(L"HdrFormat",L"0");
+    settings.hdr_format=format==L"1"?HdrFormat::JpegXr:format==L"2"?HdrFormat::Avif:HdrFormat::UltraJpeg;
     const auto quality=value(L"HdrJpegQuality",0);
     settings.hdr_jpeg_quality=quality<=unsigned(HdrJpegQuality::Compact)?HdrJpegQuality(quality):HdrJpegQuality::Full;
+    const auto avif_quality=ini_string(L"HdrAvifQuality",L"0");
+    if(avif_quality==L"1") settings.hdr_avif_quality=HdrAvifQuality::High;
+    else if(avif_quality==L"2") settings.hdr_avif_quality=HdrAvifQuality::Balanced;
+    else if(avif_quality==L"3") settings.hdr_avif_quality=HdrAvifQuality::Compact;
     settings.modifiers=value(L"Modifiers",0)&(MOD_CONTROL|MOD_SHIFT|MOD_ALT);
     settings.key=value(L"Key",VK_SNAPSHOT);
     if (settings.key!=VK_SNAPSHOT && (settings.key<VK_F1 || settings.key>VK_F11)) settings.key=VK_SNAPSHOT;
@@ -71,6 +76,7 @@ void save_settings(const Settings& settings) {
     write(L"ClipboardMode",std::to_wstring(int(settings.clipboard_mode)));
     write(L"HdrFormat",std::to_wstring(int(settings.hdr_format)));
     write(L"HdrJpegQuality",std::to_wstring(int(settings.hdr_jpeg_quality)));
+    write(L"HdrAvifQuality",std::to_wstring(int(settings.hdr_avif_quality)));
     write(L"DarkMode",settings.dark_mode?L"1":L"0");
     write(L"ShowMagnifier",settings.show_magnifier?L"1":L"0");
     write(L"WindowSnapping",settings.window_snapping?L"1":L"0");

@@ -1,5 +1,6 @@
 #include "app/workflow.hpp"
 #include "image/scaling.hpp"
+#include "image/avif_output.hpp"
 
 namespace hdrshot {
 
@@ -37,14 +38,16 @@ WorkResult process_output(const Settings& settings,const Frame& frame,const Imag
     if(!clipboard) save_image(output,converted);
     std::wstring warning;
     std::filesystem::path original;
-    bool jpeg=false;
+    bool jpeg=false,avif=false;
     if(settings.keep_original && frame.hdr) {
         try {
             jpeg=settings.hdr_format==HdrFormat::UltraJpeg && frame.width>=8 && frame.height>=8;
+            avif=settings.hdr_format==HdrFormat::Avif;
             const auto originals=settings.folder/L"HDR images";
             std::filesystem::create_directories(originals);
-            const auto destination=originals/(name+(settings.annotate_hdr?L"-annotated":L"")+(jpeg?L".jpg":L".jxr"));
-            if(jpeg) save_hdr_jpeg(destination,frame,hdr_base?*hdr_base:converted,settings.hdr_jpeg_quality);
+            const auto destination=originals/(name+(settings.annotate_hdr?L"-annotated":L"")+(avif?L".avif":jpeg?L".jpg":L".jxr"));
+            if(avif) save_hdr_avif(destination,frame,settings.hdr_avif_quality);
+            else if(jpeg) save_hdr_jpeg(destination,frame,hdr_base?*hdr_base:converted,settings.hdr_jpeg_quality);
             else if(imported.empty() || settings.sharpness || settings.scale!=100) save_master(destination,frame);
             else copy_master(imported,destination,frame.width,frame.height);
             original=destination;
@@ -70,7 +73,7 @@ WorkResult process_output(const Settings& settings,const Frame& frame,const Imag
     if(settings.sharpness) details<<L"\nSharpness: "<<settings.sharpness<<L"%";
     if(settings.scale!=100) details<<L"\nImage size: "<<settings.scale<<L"%";
     if(!clipboard) details<<L"\n\nPNG: "<<output.wstring();
-    if(!original.empty()) details<<(jpeg?L"\n\nHDR JPEG: ":L"\n\nHDR JPEG XR: ")<<original.wstring();
+    if(!original.empty()) details<<(avif?L"\n\nHDR AVIF: ":jpeg?L"\n\nHDR JPEG: ":L"\n\nHDR JPEG XR: ")<<original.wstring();
     if(!original.empty()) details<<L"\nHDR content: "<<(settings.annotate_hdr?L"Annotated HDR":L"Original HDR")
                                 <<L" (privacy effects retained)";
     if(!warning.empty()) details<<L"\n\n"<<warning;

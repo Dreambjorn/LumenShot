@@ -14,6 +14,7 @@ struct Settings {
     bool keep_original = true, dark_mode = true, show_magnifier = false, window_snapping = false, annotate_hdr = false;
     HdrFormat hdr_format = HdrFormat::UltraJpeg;
     HdrJpegQuality hdr_jpeg_quality = HdrJpegQuality::Full;
+    HdrAvifQuality hdr_avif_quality = HdrAvifQuality::Full;
     ClipboardMode clipboard_mode = ClipboardMode::SdrImage;
     UINT modifiers = 0, key = VK_SNAPSHOT;
     unsigned sharpness = 0, scale = 100;

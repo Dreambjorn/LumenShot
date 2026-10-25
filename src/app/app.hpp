@@ -14,7 +14,7 @@ inline constexpr int hotkey_id = 1, cancel_hotkey_id = 2, tray_id = 1, countdown
 enum ControlId { Folder=100, Browse, MonitorChoice, BackendChoice, ContentChoice, PaperWhite,
                  Exposure, KeepOriginal, ModifierCtrl, ModifierShift, ModifierAlt, KeyChoice,
                  CaptureButton, SaveButton=114, FolderButton, ExitButton, Status, HdrFormatChoice, StartWithWindows, DarkMode, SettingsTabs, Sharpness, SharpnessValue, ImageSize, LicensesButton, PeakNits=127, ShowMagnifier, HdrAnnotationChoice, HdrAnnotationLabel, WindowSnapping=132,
-                 HdrJpegQualityChoice, HdrJpegQualityLabel, ClipboardChoice, HdrFormatLabel=137, ClipboardLabel };
+                 HdrJpegQualityChoice, HdrJpegQualityLabel, ClipboardChoice, HdrFormatLabel=137, ClipboardLabel, HdrAvifQualityChoice, HdrAvifQualityLabel };
 enum SettingsPage { CapturePage, ImagePage, OutputPage, GeneralPage, SettingsPageCount };
 inline constexpr int settings_width=760,settings_height=770;
 

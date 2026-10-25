@@ -122,6 +122,28 @@ int wmain(int argc,wchar_t** argv) try {
     }
     require(WritePrivateProfileStringW(L"Screenshot",L"HdrJpegQuality",nullptr,config_path().c_str()),"Cannot remove owned JPEG quality");
     require(load_settings().hdr_jpeg_quality==HdrJpegQuality::Full,"Legacy settings reduced JPEG quality");
+    require(Settings{}.hdr_format==HdrFormat::UltraJpeg && load_settings().hdr_format==HdrFormat::UltraJpeg,
+            "AVIF changed the recommended default format");
+    for(unsigned index=0;index<3;++index) {
+        require(WritePrivateProfileStringW(L"Screenshot",L"HdrFormat",std::to_wstring(index).c_str(),config_path().c_str()),"Cannot seed HDR format");
+        require(load_settings().hdr_format==HdrFormat(index),"Saved HDR format was not restored");
+    }
+    for(const wchar_t* invalid:{L"-1",L"3",L"4294967298",L"2junk",L"nan"}) {
+        require(WritePrivateProfileStringW(L"Screenshot",L"HdrFormat",invalid,config_path().c_str()),"Cannot seed invalid HDR format");
+        require(load_settings().hdr_format==HdrFormat::UltraJpeg,"Invalid format enabled another encoder");
+    }
+    require(WritePrivateProfileStringW(L"Screenshot",L"HdrFormat",nullptr,config_path().c_str()),"Cannot remove owned HDR format");
+    require(Settings{}.hdr_avif_quality==HdrAvifQuality::Full && load_settings().hdr_avif_quality==HdrAvifQuality::Full,
+            "Fresh AVIF settings reduced fidelity");
+    for(unsigned index=0;index<4;++index) {
+        require(WritePrivateProfileStringW(L"Screenshot",L"HdrAvifQuality",std::to_wstring(index).c_str(),config_path().c_str()),"Cannot seed AVIF quality");
+        require(load_settings().hdr_avif_quality==HdrAvifQuality(index),"Saved AVIF quality was not restored");
+    }
+    for(const wchar_t* invalid:{L"-1",L"4",L"4294967297",L"1junk",L"nan"}) {
+        require(WritePrivateProfileStringW(L"Screenshot",L"HdrAvifQuality",invalid,config_path().c_str()),"Cannot seed invalid AVIF quality");
+        require(load_settings().hdr_avif_quality==HdrAvifQuality::Full,"Invalid AVIF quality reduced fidelity");
+    }
+    require(WritePrivateProfileStringW(L"Screenshot",L"HdrAvifQuality",nullptr,config_path().c_str()),"Cannot remove owned AVIF quality");
     require(Settings{}.clipboard_mode==ClipboardMode::SdrImage && load_settings().clipboard_mode==ClipboardMode::SdrImage,
             "Fresh clipboard settings must use SDR only");
     for(const wchar_t* invalid:{L"-1",L"2",L"4294967297",L"1junk",L"nan"}) {
@@ -326,7 +348,30 @@ int wmain(int argc,wchar_t** argv) try {
     choose(HdrFormatChoice,1);require(load_settings().hdr_format==HdrFormat::JpegXr,"HDR format required manual saving");
     require(!IsWindowVisible(quality) && !IsWindowVisible(quality_label),"JPEG XR exposed JPEG quality controls");
     require(load_settings().hdr_jpeg_quality==HdrJpegQuality::High,"JPEG XR discarded the JPEG quality preference");
+    HWND avif_quality=GetDlgItem(window,HdrAvifQualityChoice),avif_label=GetDlgItem(window,HdrAvifQualityLabel);
+    require(!IsWindowVisible(avif_quality) && !IsWindowVisible(avif_label),"JPEG XR exposed AVIF quality");
+    choose(HdrFormatChoice,2);
+    require(load_settings().hdr_format==HdrFormat::Avif && IsWindowVisible(avif_quality) && IsWindowVisible(avif_label)
+            && !IsWindowVisible(quality) && !IsWindowVisible(quality_label),"AVIF did not expose only its own quality controls");
+    for(unsigned index=0;index<4;++index) {
+        choose(HdrAvifQualityChoice,index);
+        require(app.settings.hdr_avif_quality==HdrAvifQuality(index) && load_settings().hdr_avif_quality==HdrAvifQuality(index),
+                "AVIF quality required manual saving");
+        require(load_settings().hdr_jpeg_quality==HdrJpegQuality::High,"AVIF quality changed the JPEG preference");
+    }
+    app.capture_settings=app.settings;app.busy=true;app.set_status(L"Capturing...");choose(HdrAvifQualityChoice,2);
+    require(load_settings().hdr_avif_quality==HdrAvifQuality::Balanced && app.capture_settings.hdr_avif_quality==HdrAvifQuality::Compact
+            && app.capture_settings.hdr_format==HdrFormat::Avif,"AVIF quality changed an in-flight capture");
+    choose(HdrFormatChoice,0);
+    require(app.capture_settings.hdr_format==HdrFormat::Avif && app.settings.hdr_format==HdrFormat::UltraJpeg,
+            "HDR format changed an in-flight capture");
+    require(text(app.status)==L"Capturing...","AVIF settings saving obscured capture status");app.busy=false;
+    choose(HdrFormatChoice,2);
+    require(SendMessageW(avif_quality,CB_GETCURSEL,0,0)==2 && load_settings().hdr_jpeg_quality==HdrJpegQuality::High,
+            "Format switching lost independent quality preferences");
+    choose(HdrFormatChoice,1);
     toggle(KeepOriginal,false);require(!load_settings().keep_original && !IsWindowVisible(GetDlgItem(window,HdrFormatChoice)),"HDR retention required manual saving");
+    require(!IsWindowVisible(avif_quality) && !IsWindowVisible(avif_label),"Disabled HDR saving exposed AVIF quality");
     require(!IsWindowVisible(quality) && !IsWindowVisible(quality_label),"Disabled HDR saving exposed JPEG quality");
     require(!IsWindowVisible(clipboard) && load_settings().clipboard_mode==ClipboardMode::Both,"Disabling HDR saving lost or exposed HDR clipboard preference");
     require(!IsWindowVisible(GetDlgItem(window,HdrAnnotationChoice)) && !IsWindowVisible(GetDlgItem(window,HdrFormatLabel)),
@@ -398,7 +443,7 @@ int wmain(int argc,wchar_t** argv) try {
         app.show_page(OutputPage);
         check_option_tooltips(app,ClipboardChoice,std::filesystem::path(argv[1]),dark);
         check_option_tooltips(app,HdrAnnotationChoice,std::filesystem::path(argv[1]),dark);
-        for(unsigned format=0;format<2;++format) for(unsigned mode=0;mode<3;++mode) {
+        for(unsigned format=0;format<3;++format) for(unsigned mode=0;mode<3;++mode) {
             choose(HdrFormatChoice,format);choose(ClipboardChoice,mode);
             save_settings_preview(window,std::filesystem::path(argv[1])/(L"output-"+std::to_wstring(format)+L"-"+std::to_wstring(mode)+(dark?L"-dark.png":L"-light.png")));
         }

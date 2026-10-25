@@ -21,6 +21,7 @@ hdrshot_test(hdr_mask_tests image/hdr_mask_tests.cpp "${evidence}/hdr_mask_tests
 hdrshot_test(sharpen_tests image/sharpen_tests.cpp "${evidence}/sharpen_tests")
 hdrshot_test(scaling_tests image/scaling_tests.cpp "${evidence}/scaling_tests")
 hdrshot_test(hdr_output_tests image/hdr_output_tests.cpp "${evidence}/hdr_output_tests")
+hdrshot_test(avif_output_tests image/avif_output_tests.cpp "${evidence}/avif_output_tests")
 hdrshot_test(output_integrity_tests image/output_integrity_tests.cpp "${evidence}/output_integrity_tests")
 hdrshot_test(privacy_tests image/privacy_tests.cpp "${evidence}/privacy_tests")
 hdrshot_test(clipboard_tests platform/clipboard_tests.cpp "${evidence}/clipboard_tests")

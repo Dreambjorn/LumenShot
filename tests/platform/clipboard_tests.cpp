@@ -1,4 +1,5 @@
 #include "app/app.hpp"
+#include "../image/avif_test_helpers.hpp"
 #include <iostream>
 
 using namespace hdrshot;
@@ -132,6 +133,13 @@ void inspect_clipboard(const Image& image,const std::filesystem::path& path={},b
 }
 
 void inspect_hdr(const std::filesystem::path& path) {
+    if(path.extension()==L".avif") {
+        validate_hdr_avif(path,64,48);const auto frame=fixtures::decode_avif_bt2020(path);
+        const auto secret=frame.pixels[8*frame.width+8],light=frame.pixels.back();
+        require(std::abs(secret.r)<.001 && std::abs(secret.g)<.001 && std::abs(secret.b)<.001,"Copied AVIF exposed redacted pixels");
+        require(light.r*203>650 && light.g*203>400 && light.b*203>200,"Copied AVIF lost HDR highlights");
+        return;
+    }
     if(path.extension()==L".jxr") {
         const auto frame=load_master(path);
         require(frame.width==64 && frame.height==48,"Copied JPEG XR changed dimensions");
@@ -201,13 +209,14 @@ int wmain(int argc,wchar_t** argv) try {
     require(result.success && result.clipboard_hdr.empty() && result.clipboard.bgra==image.bgra,"Default clipboard behavior changed");
     run_producer(station.desktop,{},L"sdr");inspect_clipboard(image);
     settings.clipboard_mode=ClipboardMode::Both;
-    for(unsigned variant=0;variant<5;++variant) {
+    for(unsigned variant=0;variant<9;++variant) {
         settings.folder=directory/(L"HDR \u8bd5\u9a8c "+std::to_wstring(variant));
-        settings.hdr_format=variant==4?HdrFormat::JpegXr:HdrFormat::UltraJpeg;
+        settings.hdr_format=variant>=5?HdrFormat::Avif:variant==4?HdrFormat::JpegXr:HdrFormat::UltraJpeg;
         settings.hdr_jpeg_quality=HdrJpegQuality(variant<4?variant:0);
+        settings.hdr_avif_quality=HdrAvifQuality(variant>=5?variant-5:0);
         result=process_output(settings,frame,image,{},true);
         require(result.success && result.clipboard.bgra==image.bgra && !result.clipboard_hdr.empty(),"HDR copy workflow lost an output");
-        require(result.clipboard_hdr.extension()==(variant==4?L".jxr":L".jpg"),"HDR clipboard did not use the saved format");
+        require(result.clipboard_hdr.extension()==(variant>=5?L".avif":variant==4?L".jxr":L".jpg"),"HDR clipboard did not use the saved format");
         require(!std::filesystem::exists(settings.folder/(result.clipboard_hdr.stem().wstring()+L".png")),"Copy unexpectedly saved a companion PNG");
         run_producer(station.desktop,result.clipboard_hdr,L"hdr");inspect_clipboard(image,result.clipboard_hdr);inspect_hdr(result.clipboard_hdr);
         run_producer(station.desktop,result.clipboard_hdr,L"hdr-only");inspect_clipboard(image,result.clipboard_hdr,true);
@@ -244,13 +253,18 @@ int wmain(int argc,wchar_t** argv) try {
     result=process_output(settings,invalid,image,{},true);
     require(result.success && result.clipboard_hdr.empty() && result.clipboard.bgra==image.bgra,"HDR encoder failure lost SDR copy");
     require(result.details.find(L"HDR image could not be saved: ")!=std::wstring::npos,"HDR encoder failure was hidden");
+    settings.folder=directory/L"avif-encoder-failure";settings.hdr_format=HdrFormat::Avif;
+    result=process_output(settings,invalid,image,{},true);
+    require(result.success && result.clipboard_hdr.empty() && result.clipboard.bgra==image.bgra,"AVIF encoder failure lost SDR copy");
+    require(result.details.find(L"HDR image could not be saved: ")!=std::wstring::npos,"AVIF encoder failure was hidden");
+    settings.hdr_format=HdrFormat::UltraJpeg;
     settings.folder=directory/L"tiny";Frame tiny=frame;tiny.width=4;tiny.height=3;tiny.pixels.resize(12);
     auto preview=render_sdr(tiny,settings.color);result=process_output(settings,tiny,preview,{},true);
     require(result.success && result.clipboard_hdr.extension()==L".jxr","Tiny HDR selection lost the JPEG XR fallback");
     const auto reopened=load_master(result.clipboard_hdr);require(reopened.width==4 && reopened.height==3,"Tiny HDR clipboard fallback changed dimensions");
     settings.folder=directory/L"save-only";result=process_output(settings,frame,image);
     require(result.success && result.clipboard.bgra.empty() && result.clipboard_hdr.empty(),"Save-only workflow acquired clipboard outputs");
-    std::cout<<checks<<" isolated clipboard checks passed: exact SDR payload, Unicode HDR files, all JPEG qualities, JPEG XR, producer exit, busy clipboard, invalid buffers, missing files, and encoder fallback.\n";
+    std::cout<<checks<<" isolated clipboard checks passed: exact SDR payload, Unicode HDR files, all JPEG and AVIF qualities, JPEG XR, producer exit, busy clipboard, invalid buffers, missing files, and encoder fallback.\n";
     std::cout<<"Each producer exited before consumer reads. Only an empty, reserved noninteractive station clipboard was changed and then cleared; the interactive clipboard was not opened.\n";
     return 0;
 } catch(const std::exception& error) {std::cerr<<"Clipboard fixture failed after "<<checks<<" checks: "<<error.what()<<"\n";return 1;}

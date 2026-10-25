@@ -1,6 +1,7 @@
 #include "app/app.hpp"
 #include <iostream>
 #include "image/scaling.hpp"
+#include "../image/avif_test_helpers.hpp"
 
 using namespace hdrshot;
 
@@ -15,6 +16,7 @@ Image privacy_output_pixels(const std::filesystem::path& path) {
 }
 Frame privacy_output_hdr(const std::filesystem::path& path) {
     if(path.extension()==L".jxr") return load_master(path);
+    if(path.extension()==L".avif") return fixtures::decode_avif_bt2020(path);
     std::ifstream input(path,std::ios::binary);std::string bytes((std::istreambuf_iterator<char>(input)),{});
     uhdr_codec_private_t* decoder=uhdr_create_decoder();if(!decoder) throw std::runtime_error("Cannot create privacy HDR decoder.");
     struct Release {uhdr_codec_private_t* value;~Release(){uhdr_release_decoder(value);}} release{decoder};
@@ -275,7 +277,7 @@ int wmain(int argc,wchar_t** argv) try {
        copied.details.find(L"Sharpness: 35%")==std::wstring::npos || copied.details.find(L"Image size: 150%")==std::wstring::npos)
         throw std::runtime_error("Clipboard output lost enhancements or its saved settings.");
     unsigned privacy_exports=0;
-    for(const auto format:{HdrFormat::UltraJpeg,HdrFormat::JpegXr}) for(const unsigned scale:{100u,125u})
+    for(const auto format:{HdrFormat::UltraJpeg,HdrFormat::JpegXr,HdrFormat::Avif}) for(const unsigned scale:{100u,125u})
         for(bool annotated:{false,true}) for(const auto tool:{MarkTool::Redact,MarkTool::Blur,MarkTool::Pixelate}) {
             std::string first_png,first_hdr;
             for(unsigned variant=0;variant<(tool==MarkTool::Redact?2u:1u);++variant) {
@@ -283,6 +285,7 @@ int wmain(int argc,wchar_t** argv) try {
                 app.settings.folder=directory/(L"privacy-"+suffix);app.settings.hdr_format=format;
                 app.settings.scale=scale;app.settings.sharpness=35;app.settings.keep_original=true;app.settings.annotate_hdr=annotated;
                 app.settings.hdr_jpeg_quality=HdrJpegQuality((scale==125?2:0)+(annotated?1:0));
+                app.settings.hdr_avif_quality=HdrAvifQuality((scale==125?2:0)+(annotated?1:0));
                 app.settings.color.peak_nits=4000;app.capture_settings=app.settings;
                 Frame private_frame=frame;
                 for(unsigned y=150;y<=220;++y) for(unsigned x=150;x<=300;++x) {
@@ -343,7 +346,7 @@ int wmain(int argc,wchar_t** argv) try {
                             throw std::runtime_error("Reopened PNG, HDR fallback, or HDR master exposed redacted pixels.");
                     } else {
                         const auto q=unedited.pixels[i];
-                        const auto expected=format==HdrFormat::UltraJpeg?to_bt2020({q.r,q.g,q.b})*(80.0/203):Rgb{q.r,q.g,q.b};
+                        const auto expected=format!=HdrFormat::JpegXr?to_bt2020({q.r,q.g,q.b})*(80.0/203):Rgb{q.r,q.g,q.b};
                         changed=std::max(changed,std::abs(p.r-expected.r)+std::abs(p.g-expected.g)+std::abs(p.b-expected.b));
                     }
                 }
@@ -356,7 +359,7 @@ int wmain(int argc,wchar_t** argv) try {
                 ++privacy_exports;
             }
         }
-    std::cout<<privacy_exports<<" privacy workflows passed: native tools, immutable captures, scaled/sharpened PNG, all JPEG qualities, HDR fallback/reconstruction, and JPEG XR; covered-secret variants encode identically.\n";
+    std::cout<<privacy_exports<<" privacy workflows passed: native tools, immutable captures, scaled/sharpened PNG, all JPEG qualities, HDR fallback/reconstruction, AVIF and JPEG XR; covered-secret variants encode identically.\n";
     app.settings.folder=future_folder;
     app.busy=true;app.preparing=true;app.listen_for_escape();
     app.worker.start([&] {

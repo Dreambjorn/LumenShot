@@ -140,10 +140,13 @@ void App::create_controls() {
     HWND keep=control(L"BUTTON",L"Save HDR image",BS_AUTOCHECKBOX|WS_TABSTOP,KeepOriginal,left,248,content_width,field_height);
     SendMessageW(keep,BM_SETCHECK,settings.keep_original?BST_CHECKED:BST_UNCHECKED,0);
     control(L"STATIC",L"HDR format",SS_LEFT,HdrFormatLabel,left,294,column_width,22);
-    add_combo(HdrFormatChoice,{L"Ultra HDR JPEG (.jpg) - recommended",L"JPEG XR (.jxr) - lossless HDR"},int(settings.hdr_format),left,320,column_width);
+    add_combo(HdrFormatChoice,{L"Ultra HDR JPEG (.jpg) - recommended",L"JPEG XR (.jxr) - lossless HDR",L"HDR AVIF (.avif) - 10-bit HDR"},int(settings.hdr_format),left,320,column_width);
     control(L"STATIC",L"JPEG quality",SS_LEFT,HdrJpegQualityLabel,right,294,column_width,22);
     add_combo(HdrJpegQualityChoice,{L"Full quality (largest files)",L"High quality",L"Balanced",L"Compact (smallest files)"},
               int(settings.hdr_jpeg_quality),right,320,column_width);
+    control(L"STATIC",L"AVIF quality",SS_LEFT,HdrAvifQualityLabel,right,294,column_width,22);
+    add_combo(HdrAvifQualityChoice,{L"Full quality (10-bit precision)",L"High quality",L"Balanced",L"Compact (smallest files)"},
+              int(settings.hdr_avif_quality),right,320,column_width);
     control(L"STATIC",L"HDR content",SS_LEFT|SS_NOTIFY,HdrAnnotationLabel,left,370,column_width,22);
     add_combo(HdrAnnotationChoice,{L"Original HDR (no drawings)",L"Annotated HDR (include drawings)"},settings.annotate_hdr?1:0,left,396,column_width);
     control(L"STATIC",L"Clipboard",SS_LEFT|SS_NOTIFY,ClipboardLabel,left,466,column_width,22);
@@ -224,6 +227,9 @@ void App::update_hdr_choice() {
     const bool jpeg=SendDlgItemMessageW(window,HdrFormatChoice,CB_GETCURSEL,0,0)==0;
     for(const int id:{HdrJpegQualityChoice,HdrJpegQualityLabel})
         ShowWindow(GetDlgItem(window,id),keep && jpeg && active_page==OutputPage?SW_SHOWNA:SW_HIDE);
+    const bool avif=SendDlgItemMessageW(window,HdrFormatChoice,CB_GETCURSEL,0,0)==2;
+    for(const int id:{HdrAvifQualityChoice,HdrAvifQualityLabel})
+        ShowWindow(GetDlgItem(window,id),keep && avif && active_page==OutputPage?SW_SHOWNA:SW_HIDE);
 }
 
 void App::hide_option_tooltip() {
@@ -326,11 +332,17 @@ void App::read_controls(int changed) {
         next.dark_mode=SendDlgItemMessageW(window,DarkMode,BM_GETCHECK,0,0)==BST_CHECKED;
     if(!changed || changed==KeepOriginal)
         next.keep_original=SendDlgItemMessageW(window,KeepOriginal,BM_GETCHECK,0,0)==BST_CHECKED;
-    if(!changed || changed==HdrFormatChoice)
-        next.hdr_format=SendDlgItemMessageW(window,HdrFormatChoice,CB_GETCURSEL,0,0)==1?HdrFormat::JpegXr:HdrFormat::UltraJpeg;
+    if(!changed || changed==HdrFormatChoice) {
+        const auto index=SendDlgItemMessageW(window,HdrFormatChoice,CB_GETCURSEL,0,0);
+        next.hdr_format=index>=0 && index<=int(HdrFormat::Avif)?HdrFormat(index):HdrFormat::UltraJpeg;
+    }
     if(!changed || changed==HdrJpegQualityChoice) {
         const auto index=SendDlgItemMessageW(window,HdrJpegQualityChoice,CB_GETCURSEL,0,0);
         next.hdr_jpeg_quality=index>=0 && index<=int(HdrJpegQuality::Compact)?HdrJpegQuality(index):HdrJpegQuality::Full;
+    }
+    if(!changed || changed==HdrAvifQualityChoice) {
+        const auto index=SendDlgItemMessageW(window,HdrAvifQualityChoice,CB_GETCURSEL,0,0);
+        next.hdr_avif_quality=index>=0 && index<=int(HdrAvifQuality::Compact)?HdrAvifQuality(index):HdrAvifQuality::Full;
     }
     if(!changed || changed==ClipboardChoice) {
         const auto index=SendDlgItemMessageW(window,ClipboardChoice,CB_GETCURSEL,0,0);
@@ -465,7 +477,7 @@ LRESULT CALLBACK window_proc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
                 if(app->controls_ready && HIWORD(wp)==EN_CHANGE) app->queue_edit(LOWORD(wp));
                 if(app->controls_ready && HIWORD(wp)==EN_KILLFOCUS) app->flush_edits();
                 break;
-            case MonitorChoice: case BackendChoice: case ContentChoice: case HdrFormatChoice: case HdrAnnotationChoice: case HdrJpegQualityChoice: case ClipboardChoice: case KeyChoice: case ImageSize:
+            case MonitorChoice: case BackendChoice: case ContentChoice: case HdrFormatChoice: case HdrAnnotationChoice: case HdrJpegQualityChoice: case HdrAvifQualityChoice: case ClipboardChoice: case KeyChoice: case ImageSize:
                 if(app->controls_ready && (HIWORD(wp)==CBN_DROPDOWN || HIWORD(wp)==CBN_CLOSEUP))
                     app->hide_option_tooltip();
                 if(app->controls_ready && HIWORD(wp)==CBN_SELCHANGE) {

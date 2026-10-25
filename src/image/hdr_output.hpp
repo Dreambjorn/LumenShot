@@ -6,8 +6,9 @@
 
 namespace hdrshot {
 
-enum class HdrFormat { UltraJpeg, JpegXr };
+enum class HdrFormat { UltraJpeg, JpegXr, Avif };
 enum class HdrJpegQuality { Full, High, Balanced, Compact };
+enum class HdrAvifQuality { Full, High, Balanced, Compact };
 
 inline int hdr_jpeg_quality(HdrJpegQuality quality) {
     switch(quality) {

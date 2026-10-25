@@ -14,6 +14,8 @@ Built with WinLibs MinGW-w64 GCC 15.3.0 (UCRT). The executable statically links 
 
 The HDR JPEG writer statically links unmodified [libultrahdr 2.0.2](https://github.com/google/libultrahdr/tree/v2.0.2) under its [MIT license](licenses/libultrahdr-MIT.txt), including image_io code under [Apache 2.0](licenses/Apache-2.0.txt) and base64 code under the [modp notice](licenses/modp-base64.txt). It also links unmodified [libjpeg-turbo 3.2.0](https://github.com/libjpeg-turbo/libjpeg-turbo/tree/3.2.0); see its [license overview](licenses/libjpeg-turbo-LICENSE.md) and [IJG README](licenses/libjpeg-turbo-README.ijg). This software is based in part on the work of the Independent JPEG Group.
 
+The HDR AVIF writer statically links unmodified [libavif 1.4.2](https://github.com/AOMediaCodec/libavif/tree/v1.4.2) and [libaom 3.15.2](https://aomedia.googlesource.com/aom/+/refs/tags/v3.15.2). Their full [libavif notices](licenses/libavif-LICENSE.txt), [libaom license](licenses/libaom-LICENSE.txt), [AOM patent license](licenses/libaom-PATENTS.txt), [FAST feature detector notice](licenses/libaom-fastfeat-LICENSE.txt) and [vector notice](licenses/libaom-vector-LICENSE.txt) are embedded in the executable. The portable build uses the generic CPU implementation and needs no separately installed AVIF codec.
+
 This product includes Gain Map technology under license by Adobe. See the [Gain Map notice](licenses/Adobe-Gain-Map-NOTICE.txt) and Adobe's [Gain Map Specification Patent License](https://helpx.adobe.com/camera-raw/desktop/hdr-and-advanced-output/gain-map.html) for its terms.
 
 Oklab transforms use Björn Ottosson's published matrices, public domain with MIT as an alternative: [source](https://bottosson.github.io/posts/oklab/#converting-from-linear-srgb-to-oklab).
