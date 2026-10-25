@@ -4,6 +4,25 @@
 #include <shobjidl.h>
 
 namespace hdrshot {
+namespace {
+constexpr wchar_t hdr_content_hint[]=L"Redaction, blur and pixelation are kept even when drawings are excluded.";
+const wchar_t* clipboard_description(int mode) {
+    if(mode==1) return L"Copies the saved HDR file. Some apps cannot paste this format.";
+    if(mode==2) return L"Copies the SDR image and HDR file. The app you paste into chooses which one to use.";
+    return L"Copies the SDR image for broad paste compatibility.";
+}
+LRESULT CALLBACK option_tooltip_proc(HWND list,UINT message,WPARAM wp,LPARAM lp,UINT_PTR id,DWORD_PTR data) {
+    auto& app=*reinterpret_cast<App*>(data);
+    if(message==WM_MOUSEMOVE) {
+        app.update_option_tooltip(list,int(id),{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)});
+        TRACKMOUSEEVENT tracking{sizeof(tracking),TME_LEAVE,list,0};TrackMouseEvent(&tracking);
+    }
+    if(message==WM_MOUSELEAVE || (message==WM_SHOWWINDOW && !wp) || message==WM_NCDESTROY)
+        if(app.tooltip_list==list) app.hide_option_tooltip();
+    if(message==WM_NCDESTROY) RemoveWindowSubclass(list,option_tooltip_proc,id);
+    return DefSubclassProc(list,message,wp,lp);
+}
+}
 
 std::wstring text(HWND control) {
     const int length=GetWindowTextLengthW(control);
@@ -138,11 +157,20 @@ void App::create_controls() {
     for(const int id:{HdrAnnotationLabel,HdrAnnotationChoice,ClipboardLabel,ClipboardChoice}) {
         TOOLINFOW tool{};tool.cbSize=TTTOOLINFOW_V2_SIZE;tool.hwnd=window;
         tool.uFlags=TTF_IDISHWND|TTF_SUBCLASS;tool.uId=reinterpret_cast<UINT_PTR>(GetDlgItem(window,id));
-        tool.lpszText=const_cast<wchar_t*>(id==ClipboardLabel || id==ClipboardChoice?
-            L"Copies the SDR image for broad paste compatibility.":
-            L"Redaction, blur and pixelation are kept even when drawings are excluded.");
+        tool.lpszText=const_cast<wchar_t*>(id==ClipboardLabel || id==ClipboardChoice?clipboard_description(0):hdr_content_hint);
         if(!SendMessageW(settings_tooltip,TTM_ADDTOOLW,0,reinterpret_cast<LPARAM>(&tool)))
             throw std::runtime_error("Cannot attach settings tooltip.");
+    }
+    for(const int id:{HdrAnnotationChoice,ClipboardChoice}) {
+        COMBOBOXINFO combo{};combo.cbSize=sizeof(combo);
+        if(!GetComboBoxInfo(GetDlgItem(window,id),&combo) || !combo.hwndList)
+            throw std::runtime_error("Cannot find dropdown tooltip target.");
+        TOOLINFOW tool{};tool.cbSize=TTTOOLINFOW_V2_SIZE;tool.hwnd=window;
+        tool.uFlags=TTF_IDISHWND|TTF_TRACK|TTF_ABSOLUTE;tool.uId=reinterpret_cast<UINT_PTR>(combo.hwndList);
+        tool.lpszText=const_cast<wchar_t*>(id==ClipboardChoice?clipboard_description(0):hdr_content_hint);
+        if(!SendMessageW(settings_tooltip,TTM_ADDTOOLW,0,reinterpret_cast<LPARAM>(&tool)) ||
+           !SetWindowSubclass(combo.hwndList,option_tooltip_proc,UINT_PTR(id),reinterpret_cast<DWORD_PTR>(this)))
+            throw std::runtime_error("Cannot attach dropdown option tooltip.");
     }
     creating_page=GeneralPage;
     HWND dark=control(L"BUTTON",L"Dark mode",BS_AUTOCHECKBOX|WS_TABSTOP,DarkMode,left,168,column_width,field_height);
@@ -173,7 +201,7 @@ void App::create_controls() {
 }
 
 void App::show_page(int page) {
-    if(settings_tooltip) SendMessageW(settings_tooltip,TTM_POP,0,0);
+    hide_option_tooltip();
     active_page=std::clamp(page,0,int(SettingsPageCount)-1);TabCtrl_SetCurSel(GetDlgItem(window,SettingsTabs),active_page);
     for(const auto& item:page_controls)
         ShowWindow(item.first,item.second==active_page?SW_SHOWNA:SW_HIDE);
@@ -185,10 +213,8 @@ void App::update_hdr_choice() {
     for(const int id:{HdrFormatChoice,HdrFormatLabel,HdrAnnotationChoice,HdrAnnotationLabel,ClipboardChoice,ClipboardLabel})
         ShowWindow(GetDlgItem(window,id),keep && active_page==OutputPage?SW_SHOWNA:SW_HIDE);
     const auto mode=SendDlgItemMessageW(window,ClipboardChoice,CB_GETCURSEL,0,0);
-    const wchar_t* hint=mode==1?L"Copies the saved HDR file. Some apps cannot paste this format.":
-        mode==2?L"Offers both representations. The receiving app chooses what to paste.":
-        L"Copies the SDR image for broad paste compatibility.";
-    if(settings_tooltip) SendMessageW(settings_tooltip,TTM_POP,0,0);
+    const wchar_t* hint=clipboard_description(int(mode));
+    hide_option_tooltip();
     for(const int id:{ClipboardLabel,ClipboardChoice}) {
         TOOLINFOW tool{};tool.cbSize=TTTOOLINFOW_V2_SIZE;tool.hwnd=window;
         tool.uFlags=TTF_IDISHWND|TTF_SUBCLASS;tool.uId=reinterpret_cast<UINT_PTR>(GetDlgItem(window,id));
@@ -198,6 +224,45 @@ void App::update_hdr_choice() {
     const bool jpeg=SendDlgItemMessageW(window,HdrFormatChoice,CB_GETCURSEL,0,0)==0;
     for(const int id:{HdrJpegQualityChoice,HdrJpegQualityLabel})
         ShowWindow(GetDlgItem(window,id),keep && jpeg && active_page==OutputPage?SW_SHOWNA:SW_HIDE);
+}
+
+void App::hide_option_tooltip() {
+    if(tooltip_list) {
+        TOOLINFOW tool{};tool.cbSize=TTTOOLINFOW_V2_SIZE;tool.hwnd=window;
+        tool.uId=reinterpret_cast<UINT_PTR>(tooltip_list);
+        SendMessageW(settings_tooltip,TTM_TRACKACTIVATE,FALSE,reinterpret_cast<LPARAM>(&tool));
+    }
+    tooltip_list=nullptr;tooltip_option=-1;
+    if(settings_tooltip) SendMessageW(settings_tooltip,TTM_POP,0,0);
+}
+
+void App::update_option_tooltip(HWND list,int control,POINT point) {
+    const auto item=SendMessageW(list,LB_ITEMFROMPOINT,0,MAKELPARAM(point.x,point.y));
+    const int index=LOWORD(item);RECT row{};
+    if(HIWORD(item) || index>=SendMessageW(list,LB_GETCOUNT,0,0) ||
+       SendMessageW(list,LB_GETITEMRECT,index,reinterpret_cast<LPARAM>(&row))==LB_ERR || !PtInRect(&row,point)) {
+        hide_option_tooltip();return;
+    }
+    if(tooltip_list==list && tooltip_option==index) return;
+    hide_option_tooltip();tooltip_list=list;tooltip_option=index;
+    TOOLINFOW tool{};tool.cbSize=TTTOOLINFOW_V2_SIZE;tool.hwnd=window;
+    tool.uFlags=TTF_IDISHWND|TTF_TRACK|TTF_ABSOLUTE;tool.uId=reinterpret_cast<UINT_PTR>(list);
+    tool.lpszText=const_cast<wchar_t*>(control==ClipboardChoice?clipboard_description(index):hdr_content_hint);
+    SendMessageW(settings_tooltip,TTM_UPDATETIPTEXTW,0,reinterpret_cast<LPARAM>(&tool));
+    RECT bounds{};GetWindowRect(list,&bounds);
+    LONG x=bounds.right+8,y=bounds.top+row.top;
+    SendMessageW(settings_tooltip,TTM_TRACKPOSITION,0,MAKELPARAM(x,y));
+    SendMessageW(settings_tooltip,TTM_TRACKACTIVATE,TRUE,reinterpret_cast<LPARAM>(&tool));
+    RECT bubble{};GetWindowRect(settings_tooltip,&bubble);
+    const LONG width=bubble.right-bubble.left,height=bubble.bottom-bubble.top;
+    MONITORINFO monitor{};monitor.cbSize=sizeof(monitor);
+    if(GetMonitorInfoW(MonitorFromWindow(list,MONITOR_DEFAULTTONEAREST),&monitor)) {
+        const RECT work=monitor.rcWork;
+        if(x+width>work.right-4) x=bounds.left-width-8;
+        x=std::clamp(x,work.left+4,std::max(work.left+4,work.right-width-4));
+        y=std::clamp(y,work.top+4,std::max(work.top+4,work.bottom-height-4));
+    }
+    SendMessageW(settings_tooltip,TTM_TRACKPOSITION,0,MAKELPARAM(x,y));
 }
 
 void App::update_sharpness_label() {
@@ -401,6 +466,8 @@ LRESULT CALLBACK window_proc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
                 if(app->controls_ready && HIWORD(wp)==EN_KILLFOCUS) app->flush_edits();
                 break;
             case MonitorChoice: case BackendChoice: case ContentChoice: case HdrFormatChoice: case HdrAnnotationChoice: case HdrJpegQualityChoice: case ClipboardChoice: case KeyChoice: case ImageSize:
+                if(app->controls_ready && (HIWORD(wp)==CBN_DROPDOWN || HIWORD(wp)==CBN_CLOSEUP))
+                    app->hide_option_tooltip();
                 if(app->controls_ready && HIWORD(wp)==CBN_SELCHANGE) {
                     app->apply_setting(LOWORD(wp));
                     if(LOWORD(wp)==HdrFormatChoice || LOWORD(wp)==ClipboardChoice) app->update_hdr_choice();

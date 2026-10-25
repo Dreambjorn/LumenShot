@@ -19,7 +19,8 @@ enum SettingsPage { CapturePage, ImagePage, OutputPage, GeneralPage, SettingsPag
 inline constexpr int settings_width=760,settings_height=770;
 
 struct App {
-    HWND window=nullptr,status=nullptr,menu_window=nullptr,settings_tooltip=nullptr;
+    HWND window=nullptr,status=nullptr,menu_window=nullptr,settings_tooltip=nullptr,tooltip_list=nullptr;
+    int tooltip_option=-1;
     HFONT body_font=nullptr,title_font=nullptr,small_font=nullptr;
     NativeTheme theme;
     LicenseViewer licenses;
@@ -53,6 +54,8 @@ struct App {
     void create_controls();
     void show_page(int page);
     void update_hdr_choice();
+    void update_option_tooltip(HWND list,int control,POINT point);
+    void hide_option_tooltip();
     void update_sharpness_label();
     void read_controls(int changed=0);
     bool apply_setting(int id);

@@ -31,6 +31,44 @@ void save_settings_preview(HWND window,const std::filesystem::path& path) {
     for(std::size_t i=3;i<image.bgra.size();i+=4) image.bgra[i]=255;
     std::filesystem::create_directories(path.parent_path());save_image(path,image);
 }
+void check_option_tooltips(App& app,int control,const std::filesystem::path& directory,bool dark) {
+    HWND combo=GetDlgItem(app.window,control);COMBOBOXINFO info{};info.cbSize=sizeof(info);
+    require(GetComboBoxInfo(combo,&info)!=FALSE && info.hwndList,"Cannot inspect owned dropdown list");
+    const auto saved=load_settings();const auto clipboard=app.settings.clipboard_mode;const bool annotated=app.settings.annotate_hdr;
+    SendMessageW(combo,CB_SHOWDROPDOWN,TRUE,0);
+    require(SendMessageW(combo,CB_GETDROPPEDSTATE,0,0) && IsWindowVisible(info.hwndList),"Cannot open owned tooltip menu");
+    for(int index=0;index<SendMessageW(info.hwndList,LB_GETCOUNT,0,0);++index) {
+        RECT item{};require(SendMessageW(info.hwndList,LB_GETITEMRECT,index,reinterpret_cast<LPARAM>(&item))!=LB_ERR,"Cannot inspect dropdown row");
+        SendMessageW(info.hwndList,WM_MOUSEMOVE,0,MAKELPARAM((item.left+item.right)/2,(item.top+item.bottom)/2));
+        require(IsWindowVisible(app.settings_tooltip) && app.tooltip_list==info.hwndList && app.tooltip_option==index,
+                "Hovering a dropdown option did not show its tooltip");
+        require(SendMessageW(combo,CB_GETDROPPEDSTATE,0,0)!=FALSE,"Option tooltip closed its dropdown");
+        TOOLINFOW tool{};tool.cbSize=TTTOOLINFOW_V2_SIZE;tool.hwnd=app.window;tool.uId=reinterpret_cast<UINT_PTR>(info.hwndList);
+        require(SendMessageW(app.settings_tooltip,TTM_GETTOOLINFOW,0,reinterpret_cast<LPARAM>(&tool))!=FALSE,"Dropdown tooltip target is missing");
+        require((tool.uFlags&(TTF_TRACK|TTF_ABSOLUTE))==(TTF_TRACK|TTF_ABSOLUTE),"Dropdown tooltip cannot track option hover");
+        wchar_t hint[256]{};tool.lpszText=hint;SendMessageW(app.settings_tooltip,TTM_GETTEXTW,256,reinterpret_cast<LPARAM>(&tool));
+        const wchar_t* expected[]={L"SDR image",L"saved HDR file",L"app you paste into chooses"};
+        require(std::wstring(hint).find(control==ClipboardChoice?expected[index]:L"Redaction, blur and pixelation")!=std::wstring::npos,
+                "Dropdown option tooltip shows help for a different option");
+        RECT menu{},bubble{},overlap{};GetWindowRect(info.hwndList,&menu);GetWindowRect(app.settings_tooltip,&bubble);
+        require(!IntersectRect(&overlap,&menu,&bubble),"Option tooltip covers its dropdown options");
+        MONITORINFO monitor{};monitor.cbSize=sizeof(monitor);require(GetMonitorInfoW(MonitorFromWindow(info.hwndList,MONITOR_DEFAULTTONEAREST),&monitor)!=FALSE,"Cannot inspect dropdown monitor");
+        require(bubble.left>=monitor.rcWork.left && bubble.right<=monitor.rcWork.right && bubble.top>=monitor.rcWork.top && bubble.bottom<=monitor.rcWork.bottom,
+                "Option tooltip leaves its monitor work area");
+        save_settings_preview(app.settings_tooltip,directory/(L"tooltip-"+std::to_wstring(control)+L"-"+std::to_wstring(index)+(dark?L"-dark.png":L"-light.png")));
+        require(app.settings.clipboard_mode==clipboard && app.settings.annotate_hdr==annotated,"Option hover changed capture settings");
+    }
+    SendMessageW(info.hwndList,WM_MOUSELEAVE,0,0);
+    require(!IsWindowVisible(app.settings_tooltip) && !app.tooltip_list,"Leaving the dropdown left a tooltip visible");
+    RECT item{};SendMessageW(info.hwndList,LB_GETITEMRECT,0,reinterpret_cast<LPARAM>(&item));
+    SendMessageW(info.hwndList,WM_MOUSEMOVE,0,MAKELPARAM((item.left+item.right)/2,(item.top+item.bottom)/2));
+    require(IsWindowVisible(app.settings_tooltip),"Reentering dropdown did not restore help");
+    SendMessageW(combo,CB_SHOWDROPDOWN,FALSE,0);
+    require(!IsWindowVisible(app.settings_tooltip) && !app.tooltip_list,"Closing the dropdown left a tooltip visible");
+    const auto restored=load_settings();
+    require(restored.clipboard_mode==saved.clipboard_mode && restored.annotate_hdr==saved.annotate_hdr,"Option hover persisted a settings change");
+}
+
 int wmain(int argc,wchar_t** argv) try {
     if(argc!=2)throw std::runtime_error("Specify an owned automatic-settings evidence directory.");
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -250,7 +288,7 @@ int wmain(int argc,wchar_t** argv) try {
         choose(ClipboardChoice,index);
         require(app.settings.clipboard_mode==ClipboardMode(index) && load_settings().clipboard_mode==ClipboardMode(index),
                 "Clipboard mode did not save automatically");
-        const wchar_t* expected[]={L"SDR image",L"saved HDR file",L"receiving app chooses"};
+        const wchar_t* expected[]={L"SDR image",L"saved HDR file",L"app you paste into chooses"};
         for(const int id:{ClipboardLabel,ClipboardChoice}) {
             TOOLINFOW tool{};tool.cbSize=TTTOOLINFOW_V2_SIZE;tool.hwnd=window;tool.uId=reinterpret_cast<UINT_PTR>(GetDlgItem(window,id));
             require(SendMessageW(app.settings_tooltip,TTM_GETTOOLINFOW,0,reinterpret_cast<LPARAM>(&tool))!=FALSE,
@@ -265,7 +303,7 @@ int wmain(int argc,wchar_t** argv) try {
             && app.capture_settings.clipboard_mode==ClipboardMode::Both,"Clipboard mode changed an in-flight capture");
     require(text(app.status)==L"Capturing...","Clipboard saving obscured capture status");app.busy=false;
     choose(ClipboardChoice,2);
-    require(app.settings_tooltip && SendMessageW(app.settings_tooltip,TTM_GETTOOLCOUNT,0,0)==4,"Settings hover targets are missing");
+    require(app.settings_tooltip && SendMessageW(app.settings_tooltip,TTM_GETTOOLCOUNT,0,0)==6,"Settings hover targets are missing");
     for(const int id:{HdrAnnotationChoice,HdrAnnotationLabel}) {
         TOOLINFOW tool{};tool.cbSize=TTTOOLINFOW_V2_SIZE;tool.hwnd=window;tool.uId=reinterpret_cast<UINT_PTR>(GetDlgItem(window,id));
         require(SendMessageW(app.settings_tooltip,TTM_GETTOOLINFOW,0,reinterpret_cast<LPARAM>(&tool))!=FALSE,
@@ -358,6 +396,8 @@ int wmain(int argc,wchar_t** argv) try {
             save_settings_preview(window,std::filesystem::path(argv[1])/(L"settings-"+std::to_wstring(page)+(dark?L"-dark.png":L"-light.png")));
         }
         app.show_page(OutputPage);
+        check_option_tooltips(app,ClipboardChoice,std::filesystem::path(argv[1]),dark);
+        check_option_tooltips(app,HdrAnnotationChoice,std::filesystem::path(argv[1]),dark);
         for(unsigned format=0;format<2;++format) for(unsigned mode=0;mode<3;++mode) {
             choose(HdrFormatChoice,format);choose(ClipboardChoice,mode);
             save_settings_preview(window,std::filesystem::path(argv[1])/(L"output-"+std::to_wstring(format)+L"-"+std::to_wstring(mode)+(dark?L"-dark.png":L"-light.png")));
