@@ -46,7 +46,7 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # tags, for the version check
+          fetch-depth: 0 # tags, for version checks and release notes
           persist-credentials: false
 
       - name: Read the version
@@ -81,15 +81,42 @@ jobs:
           set -euo pipefail
           sha256=$(sha256sum build/LumenShot.exe | cut -d' ' -f1)
           notes_file="$RUNNER_TEMP/release-notes.md"
-          gh api --method POST "repos/$GH_REPO/releases/generate-notes" \
-            -f "tag_name=$RELEASE_TAG" \
-            -f "target_commitish=$GITHUB_SHA" \
-            --jq .body > "$notes_file"
+          previous_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' "$GITHUB_SHA" 2>/dev/null || true)
+          range="${previous_tag:+$previous_tag..}$GITHUB_SHA"
+          repo_url="$GITHUB_SERVER_URL/$GH_REPO"
           {
+            printf '## Changes\n\n'
+            # Source changes include direct commits; test, docs and build-only work stays in the changelog.
+            git log --full-history --reverse --no-merges --format='%s' "$range" -- src |
+              awk '
+                {
+                  title = tolower($0)
+                  if (title ~ /^(bump|raise|set|update|increment) (the )?(app(lication)? |release )?version/) next
+                  if (title ~ /^(prepare|cut|tag) (the |a )?(release|v[0-9])/) next
+                  if (title ~ /^(release )?v?[0-9]+\.[0-9]+\.[0-9]+( |$)/) next
+                  if (title ~ /^(refactor|reformat|format|reorganize|restructure|tidy|clean up)( |:)/) next
+                  if (title ~ /^(remove|drop) (unused|redundant|duplicate|dead) /) next
+                  if (title ~ /^(separate|move|split|consolidate) .* (modules?|files?|folders?|directories|helpers?|functions?)( |$)/) next
+                  if (title ~ /^(clarify|reword|rename|name)( |:)/) next
+                  if (title ~ /^(fix|correct) (a |the )?(typos?|spelling|wording|comments?)( |:|$)/) next
+                  if (title ~ /^(add|show|update|fix|improve) .*tooltips?/) next
+                  if (title ~ /^(add|show|update) (the )?app(lication)? version/) next
+                  if (!seen[title]++) {
+                    print "- " $0
+                    count++
+                  }
+                }
+                END { if (!count) print "No notable application changes." }
+              '
+            if [ -n "$previous_tag" ]; then
+              printf '\n**Full changelog:** %s/compare/%s...%s\n' "$repo_url" "$previous_tag" "$RELEASE_TAG"
+            else
+              printf '\n**Full changelog:** %s/commits/%s\n' "$repo_url" "$RELEASE_TAG"
+            fi
             printf '\n## SHA256\n\n'
             printf '| File | SHA256 |\n| --- | --- |\n'
             printf '| LumenShot.exe | `%s` |\n' "$sha256"
-          } >> "$notes_file"
+          } > "$notes_file"
           flags=()
           if [ "$DRAFT" = 'true' ]; then flags+=(--draft); fi
           if [ "$PRERELEASE" = 'true' ]; then flags+=(--prerelease); fi
