@@ -118,7 +118,7 @@ void App::create_controls() {
     add_combo(HdrFormatChoice,{L"Ultra HDR JPEG (.jpg) - recommended",L"JPEG XR (.jxr) - lossless HDR"},int(settings.hdr_format),right,236,column_width);
     control(L"STATIC",L"HDR content",SS_LEFT,HdrAnnotationLabel,left,286,column_width,22);
     add_combo(HdrAnnotationChoice,{L"Original HDR (no drawings)",L"Annotated HDR (include drawings)"},settings.annotate_hdr?1:0,left,312,content_width);
-    control(L"STATIC",L"Redaction, blur and pixelation apply to both HDR options.",SS_LEFT,HdrPrivacyLabel,left,352,content_width,22);
+    control(L"STATIC",L"Redaction, blur and pixelation are kept even when drawings are excluded.",SS_LEFT,HdrPrivacyLabel,left,352,content_width,22);
     creating_page=GeneralPage;
     HWND dark=control(L"BUTTON",L"Dark mode",BS_AUTOCHECKBOX|WS_TABSTOP,DarkMode,left,168,column_width,field_height);
     SendMessageW(dark,BM_SETCHECK,settings.dark_mode?BST_CHECKED:BST_UNCHECKED,0);
