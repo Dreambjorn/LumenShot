@@ -50,8 +50,11 @@ int wmain(int argc,wchar_t** argv) try {
     INITCOMMONCONTROLSEX common{sizeof(common),ICC_STANDARD_CLASSES};InitCommonControlsEx(&common);
     WNDCLASSW wc{};wc.lpfnWndProc=window_proc;wc.hInstance=GetModuleHandleW(nullptr);
     wc.lpszClassName=window_class;RegisterClassW(&wc);
-    HWND window=CreateWindowExW(0,window_class,L"LumenShot",WS_OVERLAPPEDWINDOW,
-        0,0,714,750,nullptr,nullptr,wc.hInstance,&app);
+    constexpr DWORD settings_style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;
+    RECT settings_bounds{0,0,settings_width,settings_height};
+    AdjustWindowRectEx(&settings_bounds,settings_style,FALSE,0);
+    HWND window=CreateWindowExW(0,window_class,L"LumenShot",settings_style,
+        0,0,settings_bounds.right-settings_bounds.left,settings_bounds.bottom-settings_bounds.top,nullptr,nullptr,wc.hInstance,&app);
     if(!window) throw std::runtime_error("Cannot create own app workflow window.");
     struct CloseWindow {HWND window;~CloseWindow(){DestroyWindow(window);}} close{window};
     Frame frame;frame.width=900;frame.height=600;frame.hdr=true;frame.sdr_white=203;

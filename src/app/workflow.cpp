@@ -56,11 +56,15 @@ WorkResult process_output(const Settings& settings,const Frame& frame,const Imag
     }
     WorkResult result;
     result.success=true;
-    if(clipboard) result.clipboard=converted;
+    if(clipboard) {
+        result.clipboard=converted;
+        if(settings.keep_original && frame.hdr) result.clipboard_mode=settings.clipboard_mode;
+        if(result.clipboard_mode!=ClipboardMode::SdrImage) result.clipboard_hdr=original;
+    }
     result.status=clipboard?L"Copied screenshot to clipboard":L"Saved screenshot";
     std::wostringstream details;
     details<<L"Size: "<<converted.width<<L" x "<<converted.height
-           <<(clipboard?L"\nClipboard color: ":L"\nPNG color: ")<<converted.description;
+           <<(clipboard?(result.clipboard_mode==ClipboardMode::HdrFile?L"\nPreview color: ":L"\nClipboard color: "):L"\nPNG color: ")<<converted.description;
     if(frame.hdr && settings.color.exposure!=0)
         details<<L"\nHDR exposure setting: "<<std::showpos<<std::fixed<<std::setprecision(2)<<settings.color.exposure<<L" stops";
     if(settings.sharpness) details<<L"\nSharpness: "<<settings.sharpness<<L"%";

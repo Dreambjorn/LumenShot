@@ -6,6 +6,8 @@
 #include "image/privacy.hpp"
 #include "image/annotation_compositor.hpp"
 #include <commdlg.h>
+#include <shellapi.h>
+#include <shlobj.h>
 #include <windowsx.h>
 #include <initializer_list>
 #include <string>
@@ -208,21 +210,58 @@ inline std::vector<std::uint8_t> clipboard_dib(const Image& image) {
     std::memcpy(data.data()+sizeof(header),image.bgra.data(),bytes);
     return data;
 }
-inline void copy_image(HWND owner,const Image& image) {
+inline std::vector<std::uint8_t> clipboard_file(const std::filesystem::path& path) {
+    const auto name=path.wstring();
+    if(!path.is_absolute() || name.find(L'\0')!=std::wstring::npos || !std::filesystem::is_regular_file(path))
+        throw std::runtime_error("The saved HDR clipboard file is unavailable.");
+    DROPFILES header{};header.pFiles=sizeof(header);header.fWide=TRUE;
+    std::vector<std::uint8_t> data(sizeof(header)+(name.size()+2)*sizeof(wchar_t));
+    std::memcpy(data.data(),&header,sizeof(header));
+    std::memcpy(data.data()+sizeof(header),name.data(),name.size()*sizeof(wchar_t));
+    return data;
+}
+inline bool copy_image(HWND owner,const Image& image,const std::filesystem::path& hdr_file={},bool hdr_only=false) {
     DiagnosticTimer timing(DiagnosticStage::Clipboard);
-    const auto data=clipboard_dib(image);
-    HGLOBAL block=GlobalAlloc(GMEM_MOVEABLE,data.size());
-    if(!block) throw std::runtime_error("Cannot allocate clipboard image.");
-    void* memory=GlobalLock(block);
-    if(!memory) {GlobalFree(block);throw std::runtime_error("Cannot access clipboard image.");}
-    std::memcpy(memory,data.data(),data.size());GlobalUnlock(block);
+    struct Blocks {
+        HGLOBAL image=nullptr,file=nullptr,effect=nullptr;
+        ~Blocks(){if(image) GlobalFree(image);if(file) GlobalFree(file);if(effect) GlobalFree(effect);}
+    } blocks;
+    const auto allocate=[](const std::vector<std::uint8_t>& data) {
+        HGLOBAL block=GlobalAlloc(GMEM_MOVEABLE,data.size());
+        if(!block) throw std::runtime_error("Cannot allocate clipboard image.");
+        void* memory=GlobalLock(block);
+        if(!memory) {GlobalFree(block);throw std::runtime_error("Cannot access clipboard image.");}
+        std::memcpy(memory,data.data(),data.size());GlobalUnlock(block);return block;
+    };
+    blocks.image=allocate(clipboard_dib(image));
+    UINT effect_format=0;
+    if(!hdr_file.empty()) {
+        try {
+            const auto file=clipboard_file(hdr_file);
+            effect_format=RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT);
+            if(!effect_format) throw std::runtime_error("Cannot register clipboard file copying.");
+            const DWORD effect=DROPEFFECT_COPY;
+            std::vector<std::uint8_t> data(sizeof(effect));std::memcpy(data.data(),&effect,sizeof(effect));
+            blocks.effect=allocate(data);blocks.file=allocate(file);
+        } catch(const std::exception&) {}
+    }
     bool opened=false;
     for(int i=0;i<12 && !opened;++i) {opened=OpenClipboard(owner)!=FALSE;if(!opened) Sleep(15);}
-    if(!opened) {GlobalFree(block);throw std::runtime_error("Clipboard is busy. Try copying again.");}
-    if(!EmptyClipboard() || !SetClipboardData(CF_DIBV5,block)) {
-        CloseClipboard();GlobalFree(block);throw std::runtime_error("Cannot copy screenshot to clipboard.");
-    }
-    CloseClipboard();
+    if(!opened) throw std::runtime_error("Clipboard is busy. Try copying again.");
+    struct Close {~Close(){CloseClipboard();}} close;
+    if(!EmptyClipboard()) throw std::runtime_error("Cannot copy screenshot to clipboard.");
+    const auto publish_sdr=[&] {
+        if(!blocks.image) return;
+        if(!SetClipboardData(CF_DIBV5,blocks.image)) throw std::runtime_error("Cannot copy screenshot to clipboard.");
+        blocks.image=nullptr;
+    };
+    if(!hdr_only || !blocks.file) publish_sdr();
+    if(!blocks.file) return false;
+    // Keep the prepared SDR handle until both HDR publications succeed.
+    if(!SetClipboardData(effect_format,blocks.effect)) {publish_sdr();return false;}
+    blocks.effect=nullptr;
+    if(!SetClipboardData(CF_HDROP,blocks.file)) {publish_sdr();return false;}
+    blocks.file=nullptr;return true;
 }
 
 inline constexpr int selection_escape_hotkey_id=1;

@@ -8,6 +8,8 @@ struct WorkResult {
     bool success = false, canceled = false;
     Image preview, clipboard;
     Frame frame;
+    std::filesystem::path clipboard_hdr;
+    ClipboardMode clipboard_mode=ClipboardMode::SdrImage;
     RECT bounds{};
     bool needs_selection=false;
 };

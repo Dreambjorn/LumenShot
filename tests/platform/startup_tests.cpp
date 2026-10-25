@@ -7,6 +7,7 @@ static unsigned checks=0;
 void require(bool value,const char* message){++checks;if(!value)throw std::runtime_error(message);}
 int wmain(int argc,wchar_t** argv) try {
     if(argc!=2)throw std::runtime_error("Specify an owned startup evidence directory.");
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     check(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED),"Cannot start startup fixture");
     struct Finish {~Finish(){CoUninitialize();}} finish;
     const std::wstring key=L"Software\\LumenShotFixture-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64());
@@ -41,7 +42,11 @@ int wmain(int argc,wchar_t** argv) try {
     app.settings.key=VK_F9;app.settings.modifiers=MOD_CONTROL|MOD_SHIFT|MOD_ALT;
     INITCOMMONCONTROLSEX common{sizeof(common),ICC_STANDARD_CLASSES};InitCommonControlsEx(&common);
     WNDCLASSW wc{};wc.lpfnWndProc=window_proc;wc.hInstance=GetModuleHandleW(nullptr);wc.lpszClassName=L"HdrStartupFixture";RegisterClassW(&wc);
-    HWND window=CreateWindowExW(0,wc.lpszClassName,L"Owned startup settings",WS_OVERLAPPEDWINDOW,0,0,714,750,nullptr,nullptr,wc.hInstance,&app);
+    constexpr DWORD settings_style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;
+    RECT settings_bounds{0,0,settings_width,settings_height};
+    AdjustWindowRectEx(&settings_bounds,settings_style,FALSE,0);
+    HWND window=CreateWindowExW(0,wc.lpszClassName,L"Owned startup settings",settings_style,
+        0,0,settings_bounds.right-settings_bounds.left,settings_bounds.bottom-settings_bounds.top,nullptr,nullptr,wc.hInstance,&app);
     require(window!=nullptr,"Startup control window missing");
     struct Close {HWND value;~Close(){DestroyWindow(value);}} close{window};
     require(SendDlgItemMessageW(window,StartWithWindows,BM_GETCHECK,0,0)==BST_UNCHECKED,"Startup checkbox must begin unchecked");

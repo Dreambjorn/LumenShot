@@ -13,13 +13,13 @@ inline constexpr UINT done_message = WM_APP + 1, tray_message = WM_APP + 2;
 inline constexpr int hotkey_id = 1, cancel_hotkey_id = 2, tray_id = 1, countdown_timer = 1, settings_timer = 2, hotkey_retry_timer = 3;
 enum ControlId { Folder=100, Browse, MonitorChoice, BackendChoice, ContentChoice, PaperWhite,
                  Exposure, KeepOriginal, ModifierCtrl, ModifierShift, ModifierAlt, KeyChoice,
-                 CaptureButton, SaveButton=114, FolderButton, ExitButton, Status, HdrFormatChoice, StartWithWindows, DarkMode, SettingsTabs, Sharpness, SharpnessValue, ImageSize, LicensesButton, PeakNits=127, ShowMagnifier, HdrAnnotationChoice, HdrAnnotationLabel, HdrPrivacyLabel, WindowSnapping,
-                 HdrJpegQualityChoice, HdrJpegQualityLabel };
+                 CaptureButton, SaveButton=114, FolderButton, ExitButton, Status, HdrFormatChoice, StartWithWindows, DarkMode, SettingsTabs, Sharpness, SharpnessValue, ImageSize, LicensesButton, PeakNits=127, ShowMagnifier, HdrAnnotationChoice, HdrAnnotationLabel, WindowSnapping=132,
+                 HdrJpegQualityChoice, HdrJpegQualityLabel, ClipboardChoice, HdrFormatLabel=137, ClipboardLabel };
 enum SettingsPage { CapturePage, ImagePage, OutputPage, GeneralPage, SettingsPageCount };
-inline constexpr int settings_width=714,settings_height=650;
+inline constexpr int settings_width=760,settings_height=770;
 
 struct App {
-    HWND window=nullptr,status=nullptr,menu_window=nullptr;
+    HWND window=nullptr,status=nullptr,menu_window=nullptr,settings_tooltip=nullptr;
     HFONT body_font=nullptr,title_font=nullptr,small_font=nullptr;
     NativeTheme theme;
     LicenseViewer licenses;

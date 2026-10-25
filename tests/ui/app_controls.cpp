@@ -34,8 +34,11 @@ int wmain() try {
     App app;app.settings.monitor=L"*";app.settings.key=VK_F9;app.settings.modifiers=MOD_CONTROL|MOD_SHIFT|MOD_ALT;
     WNDCLASSW wc{};wc.lpfnWndProc=window_proc;wc.hInstance=GetModuleHandleW(nullptr);
     wc.lpszClassName=L"LumenShotControlsFixture";RegisterClassW(&wc);
-    HWND settings=CreateWindowExW(0,wc.lpszClassName,L"Owned screenshot controls",WS_OVERLAPPEDWINDOW,
-        100,100,714,750,nullptr,nullptr,wc.hInstance,&app);
+    constexpr DWORD settings_style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;
+    RECT settings_bounds{0,0,settings_width,settings_height};
+    AdjustWindowRectEx(&settings_bounds,settings_style,FALSE,0);
+    HWND settings=CreateWindowExW(0,wc.lpszClassName,L"Owned screenshot controls",settings_style,
+        100,100,settings_bounds.right-settings_bounds.left,settings_bounds.bottom-settings_bounds.top,nullptr,nullptr,wc.hInstance,&app);
     require(settings!=nullptr,"Cannot create owned settings");
     struct CloseSettings {HWND value;~CloseSettings(){DestroyWindow(value);}} close{settings};
     // Match the application's initial hidden ShowWindow call.
@@ -71,7 +74,7 @@ int wmain() try {
     const std::pair<int,std::vector<int>> groups[]={
         {CapturePage,{MonitorChoice,BackendChoice,ModifierCtrl,ModifierShift,ModifierAlt,KeyChoice,ShowMagnifier,WindowSnapping}},
         {ImagePage,{ContentChoice,PeakNits,PaperWhite,Exposure,ImageSize,Sharpness}},
-        {OutputPage,{ControlId::Folder,Browse,KeepOriginal,HdrFormatChoice,HdrAnnotationChoice,HdrAnnotationLabel,HdrPrivacyLabel,HdrJpegQualityChoice,HdrJpegQualityLabel}},
+        {OutputPage,{ControlId::Folder,Browse,KeepOriginal,HdrFormatChoice,HdrFormatLabel,HdrAnnotationChoice,HdrAnnotationLabel,HdrJpegQualityChoice,HdrJpegQualityLabel,ClipboardChoice,ClipboardLabel}},
         {GeneralPage,{DarkMode,StartWithWindows,LicensesButton}}};
     const wchar_t* titles[]={L"Capture",L"Image",L"Output",L"General"};
     for(const auto& group:groups) {
@@ -81,6 +84,17 @@ int wmain() try {
             require((IsWindowVisible(GetDlgItem(settings,id))!=FALSE)==(candidate.first==group.first),"Settings control appeared on the wrong tab");
         for(const int id:{CaptureButton,SaveButton,Status,FolderButton,ExitButton})
             require(IsWindowVisible(GetDlgItem(settings,id)) && IsWindowEnabled(GetDlgItem(settings,id)),"Shared action disappeared when changing tabs");
+    }
+    RECT client{};GetClientRect(settings,&client);
+    require(client.right==settings_width && client.bottom==settings_height,"Owned fixture does not match production client size");
+    app.show_page(OutputPage);
+    std::vector<RECT> visible;
+    for(HWND child=GetWindow(settings,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT)) if(IsWindowVisible(child)) {
+        RECT bounds{};GetWindowRect(child,&bounds);MapWindowPoints(nullptr,settings,reinterpret_cast<POINT*>(&bounds),2);
+        require(bounds.left>=0 && bounds.top>=0 && bounds.right<=client.right && bounds.bottom<=client.bottom,
+                "Output control leaves the actual settings client area");
+        for(const auto& previous:visible) {RECT overlap{};require(!IntersectRect(&overlap,&bounds,&previous),"Visible Output controls overlap");}
+        visible.push_back(bounds);
     }
     app.show_page(CapturePage);
     HWND tabs=GetDlgItem(settings,SettingsTabs);SetFocus(tabs);

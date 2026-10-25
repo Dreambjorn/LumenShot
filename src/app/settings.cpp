@@ -37,6 +37,10 @@ Settings load_settings() {
     const auto scale=value(L"Scale",100);settings.scale=valid_scale(scale)?scale:100;
     settings.keep_original=value(L"KeepOriginal",1)!=0;
     settings.annotate_hdr=value(L"AnnotateHdr",0)==1;
+    const auto clipboard=ini_string(L"ClipboardMode",L"");
+    if(clipboard==L"1") settings.clipboard_mode=ClipboardMode::HdrFile;
+    else if(clipboard==L"2" || (clipboard.empty() && ini_string(L"CopyHdr",L"0")==L"1"))
+        settings.clipboard_mode=ClipboardMode::Both;
     settings.dark_mode=value(L"DarkMode",1)!=0;
     settings.show_magnifier=value(L"ShowMagnifier",0)!=0;
     settings.window_snapping=value(L"WindowSnapping",0)!=0;
@@ -64,6 +68,7 @@ void save_settings(const Settings& settings) {
     write(L"Scale",std::to_wstring(settings.scale));
     write(L"KeepOriginal",settings.keep_original?L"1":L"0");
     write(L"AnnotateHdr",settings.annotate_hdr?L"1":L"0");
+    write(L"ClipboardMode",std::to_wstring(int(settings.clipboard_mode)));
     write(L"HdrFormat",std::to_wstring(int(settings.hdr_format)));
     write(L"HdrJpegQuality",std::to_wstring(int(settings.hdr_jpeg_quality)));
     write(L"DarkMode",settings.dark_mode?L"1":L"0");

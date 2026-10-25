@@ -159,7 +159,18 @@ void App::finish_work() {
     }
     release_escape();
     if(!result.clipboard.bgra.empty()) {
-        try {copy_image(window,result.clipboard);}
+        try {
+            const bool hdr_only=result.clipboard_mode==ClipboardMode::HdrFile;
+            if(copy_image(window,result.clipboard,result.clipboard_hdr,hdr_only)) {
+                result.status=hdr_only?L"Copied HDR file to clipboard":L"Copied SDR image and HDR file to clipboard";
+                result.details+=hdr_only?L"\n\nThe saved HDR file is available for pasting.":
+                    L"\n\nThe saved HDR file and SDR image are both available. The receiving app chooses what to paste.";
+            } else {
+                result.status=L"Copied SDR image to clipboard";
+                if(result.clipboard_mode!=ClipboardMode::SdrImage)
+                    result.details+=L"\n\nThe HDR file could not be added to the clipboard. The SDR image was copied.";
+            }
+        }
         catch(const std::exception& error) {result.success=false;result.status=L"Copy failed";result.details=widen(error.what())+L"\n\n"+result.details;}
     }
     if(!save_capture_diagnostics(diagnostics,result.success,result.canceled))

@@ -84,6 +84,26 @@ int wmain(int argc,wchar_t** argv) try {
     }
     require(WritePrivateProfileStringW(L"Screenshot",L"HdrJpegQuality",nullptr,config_path().c_str()),"Cannot remove owned JPEG quality");
     require(load_settings().hdr_jpeg_quality==HdrJpegQuality::Full,"Legacy settings reduced JPEG quality");
+    require(Settings{}.clipboard_mode==ClipboardMode::SdrImage && load_settings().clipboard_mode==ClipboardMode::SdrImage,
+            "Fresh clipboard settings must use SDR only");
+    for(const wchar_t* invalid:{L"-1",L"2",L"4294967297",L"1junk",L"nan"}) {
+        require(WritePrivateProfileStringW(L"Screenshot",L"CopyHdr",invalid,config_path().c_str()),"Cannot seed invalid legacy clipboard preference");
+        require(load_settings().clipboard_mode==ClipboardMode::SdrImage,"Invalid legacy settings enabled HDR copying");
+    }
+    require(WritePrivateProfileStringW(L"Screenshot",L"CopyHdr",L"1",config_path().c_str()),"Cannot seed legacy HDR clipboard preference");
+    require(load_settings().clipboard_mode==ClipboardMode::Both,"Legacy HDR inclusion did not restore both representations");
+    for(unsigned index=0;index<3;++index) {
+        require(WritePrivateProfileStringW(L"Screenshot",L"ClipboardMode",std::to_wstring(index).c_str(),config_path().c_str()),"Cannot seed clipboard mode");
+        require(load_settings().clipboard_mode==ClipboardMode(index),"Clipboard mode was not restored independently of the legacy key");
+    }
+    for(const wchar_t* invalid:{L"-1",L"3",L"4294967297",L"1junk",L"nan"}) {
+        require(WritePrivateProfileStringW(L"Screenshot",L"ClipboardMode",invalid,config_path().c_str()),"Cannot seed invalid clipboard mode");
+        require(load_settings().clipboard_mode==ClipboardMode::SdrImage,"Invalid clipboard mode enabled HDR copying");
+    }
+    require(WritePrivateProfileStringW(L"Screenshot",L"ClipboardMode",nullptr,config_path().c_str()),"Cannot remove owned clipboard mode");
+    require(load_settings().clipboard_mode==ClipboardMode::Both,"Legacy inclusion was lost when the new key is absent");
+    require(WritePrivateProfileStringW(L"Screenshot",L"CopyHdr",nullptr,config_path().c_str()),"Cannot remove owned legacy clipboard preference");
+    require(load_settings().clipboard_mode==ClipboardMode::SdrImage,"Missing clipboard preferences enabled HDR copying");
     App app;app.startup=StartupRegistration(key);app.settings=Settings{};
     app.settings.folder=std::filesystem::path(argv[1]);app.settings.key=VK_F9;app.settings.modifiers=MOD_CONTROL|MOD_SHIFT|MOD_ALT;
     INITCOMMONCONTROLSEX common{sizeof(common),ICC_STANDARD_CLASSES};InitCommonControlsEx(&common);
@@ -91,7 +111,11 @@ int wmain(int argc,wchar_t** argv) try {
     HWND owner=CreateWindowExW(WS_EX_TOOLWINDOW,L"STATIC",L"Owned startup shortcut collision",WS_POPUP,0,0,0,0,nullptr,nullptr,wc.hInstance,nullptr);
     require(owner && RegisterHotKey(owner,778,app.settings.modifiers|MOD_NOREPEAT,VK_F9),"Cannot reserve the owned startup shortcut");
     struct ReleaseOwner {HWND value;~ReleaseOwner(){UnregisterHotKey(value,778);DestroyWindow(value);}} release_owner{owner};
-    HWND window=CreateWindowExW(0,wc.lpszClassName,L"Owned automatic settings",WS_OVERLAPPEDWINDOW,0,0,714,750,nullptr,nullptr,wc.hInstance,&app);
+    constexpr DWORD settings_style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;
+    RECT settings_bounds{0,0,settings_width,settings_height};
+    AdjustWindowRectEx(&settings_bounds,settings_style,FALSE,0);
+    HWND window=CreateWindowExW(0,wc.lpszClassName,L"Owned automatic settings",settings_style,
+        0,0,settings_bounds.right-settings_bounds.left,settings_bounds.bottom-settings_bounds.top,nullptr,nullptr,wc.hInstance,&app);
     require(window!=nullptr && !app.registered_key,"Startup shortcut conflict was not detected");
     struct Close {HWND value;~Close(){if(IsWindow(value))DestroyWindow(value);}} close{window};
     const auto pump_until=[&](const auto& done,unsigned milliseconds) {
@@ -218,6 +242,38 @@ int wmain(int argc,wchar_t** argv) try {
     choose(ContentChoice,1);
     require(load_settings().color.mode==ContentMode::Hdr,"Explicit HDR content choice was not preserved");
     app.show_page(OutputPage);
+    HWND clipboard=GetDlgItem(window,ClipboardChoice);
+    require(IsWindowVisible(clipboard) && SendMessageW(clipboard,CB_GETCOUNT,0,0)==3,
+            "Output must expose three explicit clipboard choices");
+    require(SendMessageW(clipboard,CB_GETCURSEL,0,0)==0,"Output clipboard must default to SDR only");
+    for(unsigned index=0;index<3;++index) {
+        choose(ClipboardChoice,index);
+        require(app.settings.clipboard_mode==ClipboardMode(index) && load_settings().clipboard_mode==ClipboardMode(index),
+                "Clipboard mode did not save automatically");
+        const wchar_t* expected[]={L"SDR image",L"saved HDR file",L"receiving app chooses"};
+        for(const int id:{ClipboardLabel,ClipboardChoice}) {
+            TOOLINFOW tool{};tool.cbSize=TTTOOLINFOW_V2_SIZE;tool.hwnd=window;tool.uId=reinterpret_cast<UINT_PTR>(GetDlgItem(window,id));
+            require(SendMessageW(app.settings_tooltip,TTM_GETTOOLINFOW,0,reinterpret_cast<LPARAM>(&tool))!=FALSE,
+                    "Clipboard hover target was not registered");
+            require((tool.uFlags&(TTF_IDISHWND|TTF_SUBCLASS))==(TTF_IDISHWND|TTF_SUBCLASS),"Clipboard tooltip cannot receive native hover messages");
+            wchar_t hint[256]{};tool.lpszText=hint;SendMessageW(app.settings_tooltip,TTM_GETTEXTW,256,reinterpret_cast<LPARAM>(&tool));
+            require(std::wstring(hint).find(expected[index])!=std::wstring::npos,"Clipboard tooltip did not follow the selected mode");
+        }
+    }
+    app.capture_settings=app.settings;app.busy=true;app.set_status(L"Capturing...");choose(ClipboardChoice,1);
+    require(app.settings.clipboard_mode==ClipboardMode::HdrFile && load_settings().clipboard_mode==ClipboardMode::HdrFile
+            && app.capture_settings.clipboard_mode==ClipboardMode::Both,"Clipboard mode changed an in-flight capture");
+    require(text(app.status)==L"Capturing...","Clipboard saving obscured capture status");app.busy=false;
+    choose(ClipboardChoice,2);
+    require(app.settings_tooltip && SendMessageW(app.settings_tooltip,TTM_GETTOOLCOUNT,0,0)==4,"Settings hover targets are missing");
+    for(const int id:{HdrAnnotationChoice,HdrAnnotationLabel}) {
+        TOOLINFOW tool{};tool.cbSize=TTTOOLINFOW_V2_SIZE;tool.hwnd=window;tool.uId=reinterpret_cast<UINT_PTR>(GetDlgItem(window,id));
+        require(SendMessageW(app.settings_tooltip,TTM_GETTOOLINFOW,0,reinterpret_cast<LPARAM>(&tool))!=FALSE,
+                "HDR content hover target was not registered");
+        require((tool.uFlags&(TTF_IDISHWND|TTF_SUBCLASS))==(TTF_IDISHWND|TTF_SUBCLASS),"HDR content tooltip cannot receive native hover messages");
+        wchar_t hint[256]{};tool.lpszText=hint;SendMessageW(app.settings_tooltip,TTM_GETTEXTW,256,reinterpret_cast<LPARAM>(&tool));
+        require(std::wstring(hint)==L"Redaction, blur and pixelation are kept even when drawings are excluded.","HDR content tooltip lost privacy guidance");
+    }
     HWND quality=GetDlgItem(window,HdrJpegQualityChoice),quality_label=GetDlgItem(window,HdrJpegQualityLabel);
     require(IsWindowVisible(quality) && IsWindowVisible(quality_label),"JPEG quality is missing from Output");
     for(unsigned index=0;index<4;++index) {
@@ -234,11 +290,16 @@ int wmain(int argc,wchar_t** argv) try {
     require(load_settings().hdr_jpeg_quality==HdrJpegQuality::High,"JPEG XR discarded the JPEG quality preference");
     toggle(KeepOriginal,false);require(!load_settings().keep_original && !IsWindowVisible(GetDlgItem(window,HdrFormatChoice)),"HDR retention required manual saving");
     require(!IsWindowVisible(quality) && !IsWindowVisible(quality_label),"Disabled HDR saving exposed JPEG quality");
-    require(!IsWindowVisible(GetDlgItem(window,HdrAnnotationChoice)) && !IsWindowVisible(GetDlgItem(window,HdrPrivacyLabel)),
+    require(!IsWindowVisible(clipboard) && load_settings().clipboard_mode==ClipboardMode::Both,"Disabling HDR saving lost or exposed HDR clipboard preference");
+    require(!IsWindowVisible(GetDlgItem(window,HdrAnnotationChoice)) && !IsWindowVisible(GetDlgItem(window,HdrFormatLabel)),
             "HDR annotation controls remained visible with HDR saving disabled");
     toggle(KeepOriginal,true);choose(HdrFormatChoice,0);
     require(IsWindowVisible(quality) && IsWindowVisible(quality_label) && SendMessageW(quality,CB_GETCURSEL,0,0)==1,
             "Returning to JPEG lost its quality preference");
+    require(IsWindowVisible(clipboard) && SendMessageW(clipboard,CB_GETCURSEL,0,0)==int(ClipboardMode::Both),
+            "HDR clipboard preference did not return with HDR saving");
+    RECT copy_rect{},capture_rect{};GetWindowRect(clipboard,&copy_rect);GetWindowRect(GetDlgItem(window,CaptureButton),&capture_rect);
+    require(copy_rect.bottom+16<=capture_rect.top,"Clipboard dropdown crowds the capture button");
     choose(HdrJpegQualityChoice,0);
     require(IsWindowVisible(GetDlgItem(window,HdrAnnotationChoice)),"HDR drawing choice did not return with HDR saving");
     choose(HdrAnnotationChoice,1);
@@ -251,6 +312,7 @@ int wmain(int argc,wchar_t** argv) try {
     toggle(DarkMode,false);save_settings_preview(window,std::filesystem::path(argv[1])/L"hdr-annotations-light.png");toggle(DarkMode,true);
     choose(HdrAnnotationChoice,0);
     app.show_page(ImagePage);
+    require(!IsWindowVisible(clipboard),"HDR clipboard option leaked onto Image settings");
     SetFocus(GetDlgItem(window,PaperWhite));SetDlgItemTextW(window,PaperWhite,L"250");
     require(app.settings.color.paper_white==0,"Text edit saved before debounce");
     wait_for_edits(app);
@@ -295,6 +357,14 @@ int wmain(int argc,wchar_t** argv) try {
             app.show_page(page);
             save_settings_preview(window,std::filesystem::path(argv[1])/(L"settings-"+std::to_wstring(page)+(dark?L"-dark.png":L"-light.png")));
         }
+        app.show_page(OutputPage);
+        for(unsigned format=0;format<2;++format) for(unsigned mode=0;mode<3;++mode) {
+            choose(HdrFormatChoice,format);choose(ClipboardChoice,mode);
+            save_settings_preview(window,std::filesystem::path(argv[1])/(L"output-"+std::to_wstring(format)+L"-"+std::to_wstring(mode)+(dark?L"-dark.png":L"-light.png")));
+        }
+        toggle(KeepOriginal,false);
+        save_settings_preview(window,std::filesystem::path(argv[1])/(dark?L"output-sdr-dark.png":L"output-sdr-light.png"));
+        toggle(KeepOriginal,true);choose(HdrFormatChoice,0);
     }
     toggle(DarkMode,true);app.show_page(OutputPage);
     SetDlgItemTextW(window,ControlId::Folder,L"relative-folder");wait_for_edits(app);
@@ -305,6 +375,7 @@ int wmain(int argc,wchar_t** argv) try {
     require(text(GetDlgItem(window,SaveButton))==L"Hide to tray","Obsolete manual-save label remains");
     SetDlgItemTextW(window,Exposure,L"0");SendMessageW(window,WM_COMMAND,ExitButton,0);
     require(!IsWindow(window) && load_settings().color.exposure==0,"Exit lost pending edit");
+    require(!IsWindow(app.settings_tooltip),"Closing settings left an owned tooltip alive");
     std::cout<<checks<<" automatic settings checks passed. Isolated INI and startup key only; no desktop capture, clipboard, game, or launcher was used.\n";
     return 0;
 } catch(const std::exception& error){std::cerr<<"Automatic settings fixture failed after "<<checks<<" checks: "<<error.what()<<"\n";return 1;}
