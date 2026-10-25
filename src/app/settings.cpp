@@ -38,7 +38,8 @@ Settings load_settings() {
     settings.keep_original=value(L"KeepOriginal",1)!=0;
     settings.annotate_hdr=value(L"AnnotateHdr",0)==1;
     settings.dark_mode=value(L"DarkMode",1)!=0;
-    settings.show_magnifier=value(L"ShowMagnifier",1)!=0;
+    settings.show_magnifier=value(L"ShowMagnifier",0)!=0;
+    settings.window_snapping=value(L"WindowSnapping",0)!=0;
     settings.hdr_format=value(L"HdrFormat",0)==1?HdrFormat::JpegXr:HdrFormat::UltraJpeg;
     settings.modifiers=value(L"Modifiers",0)&(MOD_CONTROL|MOD_SHIFT|MOD_ALT);
     settings.key=value(L"Key",VK_SNAPSHOT);
@@ -64,6 +65,7 @@ void save_settings(const Settings& settings) {
     write(L"HdrFormat",std::to_wstring(int(settings.hdr_format)));
     write(L"DarkMode",settings.dark_mode?L"1":L"0");
     write(L"ShowMagnifier",settings.show_magnifier?L"1":L"0");
+    write(L"WindowSnapping",settings.window_snapping?L"1":L"0");
     write(L"Modifiers",std::to_wstring(settings.modifiers));write(L"Key",std::to_wstring(settings.key));
 }
 std::wstring hotkey_label(const Settings& settings) {

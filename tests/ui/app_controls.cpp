@@ -69,7 +69,7 @@ int wmain() try {
     require(TabCtrl_GetItemCount(GetDlgItem(settings,SettingsTabs))==SettingsPageCount,"Settings categories are missing");
     require(IsWindowVisible(GetDlgItem(settings,MonitorChoice)) && !IsWindowVisible(GetDlgItem(settings,ContentChoice)),"Capture tab shows incorrect controls");
     const std::pair<int,std::vector<int>> groups[]={
-        {CapturePage,{MonitorChoice,BackendChoice,ModifierCtrl,ModifierShift,ModifierAlt,KeyChoice,ShowMagnifier}},
+        {CapturePage,{MonitorChoice,BackendChoice,ModifierCtrl,ModifierShift,ModifierAlt,KeyChoice,ShowMagnifier,WindowSnapping}},
         {ImagePage,{ContentChoice,PeakNits,PaperWhite,Exposure,ImageSize,Sharpness}},
         {OutputPage,{ControlId::Folder,Browse,KeepOriginal,HdrFormatChoice,HdrAnnotationChoice,HdrAnnotationLabel,HdrPrivacyLabel}},
         {GeneralPage,{DarkMode,StartWithWindows,LicensesButton}}};
@@ -196,7 +196,7 @@ int wmain() try {
     require(app.busy,"Hotkey did not start a screenshot request");
     require(IsWindowVisible(settings),"Hotkey hid the open settings window");
     for(int id: {ControlId::Folder,Browse,MonitorChoice,BackendChoice,ContentChoice,PaperWhite,Exposure,KeepOriginal,
-                 ModifierCtrl,ModifierShift,ModifierAlt,KeyChoice,CaptureButton,SaveButton,FolderButton,ExitButton,HdrFormatChoice,StartWithWindows,DarkMode,SettingsTabs,Sharpness,SharpnessValue,ImageSize,LicensesButton,ShowMagnifier,PeakNits})
+                 ModifierCtrl,ModifierShift,ModifierAlt,KeyChoice,CaptureButton,SaveButton,FolderButton,ExitButton,HdrFormatChoice,StartWithWindows,DarkMode,SettingsTabs,Sharpness,SharpnessValue,ImageSize,LicensesButton,ShowMagnifier,WindowSnapping,PeakNits})
         require(IsWindowEnabled(GetDlgItem(settings,id)),"Capture disabled a settings control");
     require(GetFocus()==content,"Capture moved focus away from the open dropdown");
     require(SendMessageW(content,CB_GETDROPPEDSTATE,0,0),"Capture closed the open dropdown before freezing it");

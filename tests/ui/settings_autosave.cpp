@@ -54,10 +54,18 @@ int wmain(int argc,wchar_t** argv) try {
     require(load_settings().color.peak_method==PeakMethod::Observed,"Observed peak fallback was not restored");
     require(WritePrivateProfileStringW(L"Screenshot",L"PeakMethod",nullptr,config_path().c_str())!=FALSE,"Cannot remove owned peak key");
     require(load_settings().color.peak_method==PeakMethod::Robust,"Missing peak preference did not use the compared default");
-    require(Settings{}.show_magnifier && load_settings().show_magnifier,"Missing magnifier preference must preserve its enabled default");
-    require(WritePrivateProfileStringW(L"Screenshot",L"ShowMagnifier",L"0",config_path().c_str())!=FALSE,"Cannot write owned magnifier preference");
-    require(!load_settings().show_magnifier,"Disabled magnifier preference was ignored");
-    require(WritePrivateProfileStringW(L"Screenshot",L"ShowMagnifier",nullptr,config_path().c_str())!=FALSE,"Cannot remove owned magnifier preference");
+    require(!Settings{}.show_magnifier && !load_settings().show_magnifier,"Magnifier must default to disabled");
+    require(!Settings{}.window_snapping && !load_settings().window_snapping,"Window snapping must default to disabled");
+    for(const wchar_t* preference:{L"ShowMagnifier",L"WindowSnapping"}) {
+        for(const wchar_t* value:{L"1",L"0"}) {
+            require(WritePrivateProfileStringW(L"Screenshot",preference,value,config_path().c_str())!=FALSE,"Cannot write owned selector preference");
+            const auto saved=load_settings();
+            require((wcscmp(preference,L"ShowMagnifier")==0?saved.show_magnifier:saved.window_snapping)==(value[0]==L'1'),
+                    "Selector default replaced an explicit saved preference");
+        }
+        require(WritePrivateProfileStringW(L"Screenshot",preference,nullptr,config_path().c_str())!=FALSE,"Cannot remove owned selector preference");
+    }
+    require(!load_settings().show_magnifier && !load_settings().window_snapping,"Missing selector preferences did not restore disabled defaults");
     require(!Settings{}.annotate_hdr && !load_settings().annotate_hdr,"HDR drawings must require an explicit choice");
     for(const wchar_t* invalid:{L"-1",L"2",L"nan"}) {
         require(WritePrivateProfileStringW(L"Screenshot",L"AnnotateHdr",invalid,config_path().c_str()),"Cannot seed invalid HDR annotation preference");
@@ -99,17 +107,31 @@ int wmain(int argc,wchar_t** argv) try {
     app.settings.color.peak_method=PeakMethod::Robust;
     toggle(DarkMode,true);require(load_settings().dark_mode && app.theme.dark,"Dark mode did not restore automatically");
     app.show_page(CapturePage);
-    HWND magnifier=GetDlgItem(window,ShowMagnifier);
+    HWND magnifier=GetDlgItem(window,ShowMagnifier),snapping=GetDlgItem(window,WindowSnapping);
     require(IsWindowVisible(magnifier) && IsWindowEnabled(magnifier) && text(magnifier)==L"Show magnifier",
             "Capture tab must expose an enabled magnifier checkbox");
-    toggle(ShowMagnifier,false);
-    require(!app.settings.show_magnifier && !load_settings().show_magnifier,"Magnifier checkbox required manual saving");
-    app.capture_settings=app.settings;app.busy=true;toggle(ShowMagnifier,true);
-    require(app.settings.show_magnifier && load_settings().show_magnifier && !app.capture_settings.show_magnifier,
-            "Magnifier checkbox changed an in-flight capture");app.busy=false;
-    toggle(ShowMagnifier,false);save_settings_preview(window,std::filesystem::path(argv[1])/L"capture-magnifier-dark.png");
-    toggle(DarkMode,false);save_settings_preview(window,std::filesystem::path(argv[1])/L"capture-magnifier-light.png");toggle(DarkMode,true);
-    toggle(ShowMagnifier,true);
+    require(IsWindowVisible(snapping) && IsWindowEnabled(snapping) && text(snapping)==L"Snap to windows",
+            "Capture tab must expose an enabled window snapping checkbox");
+    require(SendMessageW(magnifier,BM_GETCHECK,0,0)==BST_UNCHECKED && SendMessageW(snapping,BM_GETCHECK,0,0)==BST_UNCHECKED,
+            "Fresh Capture tab must leave both optional selector features unchecked");
+    for(bool enabled:{true,false}) {
+        app.capture_settings=app.settings;app.busy=true;app.set_status(L"Capturing...");
+        toggle(ShowMagnifier,enabled);
+        require(app.settings.show_magnifier==enabled && app.settings.window_snapping!=enabled,
+                "Magnifier checkbox changed the independent snapping preference");
+        toggle(WindowSnapping,enabled);
+        const auto saved=load_settings();
+        require(app.settings.show_magnifier==enabled && saved.show_magnifier==enabled
+                && app.settings.window_snapping==enabled && saved.window_snapping==enabled,
+                "Selector checkboxes required manual saving");
+        require(app.capture_settings.show_magnifier!=enabled && app.capture_settings.window_snapping!=enabled,
+                "Selector checkboxes changed an in-flight capture");
+        require(text(app.status)==L"Capturing...","Selector saving obscured active capture status");app.busy=false;
+        save_settings_preview(window,std::filesystem::path(argv[1])/(enabled?L"capture-options-enabled-dark.png":L"capture-magnifier-dark.png"));
+        toggle(DarkMode,false);
+        save_settings_preview(window,std::filesystem::path(argv[1])/(enabled?L"capture-options-enabled-light.png":L"capture-magnifier-light.png"));
+        toggle(DarkMode,true);
+    }
     choose(BackendChoice,2);require(app.settings.backend==CaptureBackend::Desktop && load_settings().backend==CaptureBackend::Desktop,"Backend choice did not apply automatically");
     choose(BackendChoice,0);
     if(!app.displays.empty()) {
@@ -117,7 +139,7 @@ int wmain(int argc,wchar_t** argv) try {
         choose(MonitorChoice,0);require(load_settings().monitor.empty(),"Active-monitor choice did not persist");
     }
     app.show_page(ImagePage);
-    require(!IsWindowVisible(magnifier),"Magnifier checkbox leaked onto the Image tab");
+    require(!IsWindowVisible(magnifier) && !IsWindowVisible(snapping),"Selector checkboxes leaked onto the Image tab");
     SetDlgItemTextW(window,PeakNits,L"600");wait_for_edits(app);
     require(app.settings.color.peak_nits==600 && load_settings().color.peak_nits==600 && app.settings.color.paper_white==0,
             "Game peak did not persist independently of automatic white");

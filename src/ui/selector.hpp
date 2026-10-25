@@ -272,7 +272,7 @@ class RegionSelector {
     POINT anchor_{},text_origin_{},pointer_{};
     RECT magnifier_{};
     int magnifier_cell_=8;
-    bool pointer_inside_=false,magnifier_enabled_=true;
+    bool pointer_inside_=false,magnifier_enabled_=false,window_snapping_=false;
     std::wstring magnifier_label_;
     std::vector<Annotation> marks_;
     Annotation current_;
@@ -697,7 +697,8 @@ class RegionSelector {
         return DefWindowProcW(window,message,wp,lp);
     }
 public:
-    explicit RegionSelector(Image image,bool show_magnifier=true):image_(std::move(image)),magnifier_enabled_(show_magnifier) {
+    explicit RegionSelector(Image image,bool show_magnifier=false,bool window_snapping=false)
+        :image_(std::move(image)),magnifier_enabled_(show_magnifier),window_snapping_(window_snapping) {
         if(image_.bgra.size()!=checked_pixels(image_.width,image_.height)*4)
             throw std::runtime_error("Invalid selection preview pixels.");
         font_=CreateFontW(-17,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
@@ -788,7 +789,7 @@ public:
         wc.lpszClassName=class_name;wc.hCursor=LoadCursorW(nullptr,IDC_CROSS);
         if(!RegisterClassW(&wc) && GetLastError()!=ERROR_CLASS_ALREADY_EXISTS)
             throw std::runtime_error("Cannot create selection interface.");
-        snap_windows_=window_snap_rectangles(screen_bounds,GetCurrentProcessId());
+        snap_windows_=window_snapping_?window_snap_rectangles(screen_bounds,GetCurrentProcessId()):std::vector<RECT>{};
         // Ownership can raise or reactivate background settings.
         window_=CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW,class_name,L"LumenShot selection",
             WS_POPUP,screen_bounds.left,screen_bounds.top,int(image_.width),int(image_.height),

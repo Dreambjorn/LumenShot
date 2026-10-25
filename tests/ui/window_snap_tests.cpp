@@ -177,49 +177,58 @@ int wmain(int argc,wchar_t** argv) try {
     }
     BYTE saved[256]{};GetKeyboardState(saved);
     struct Keys{BYTE* saved;~Keys(){SetKeyboardState(saved);}} keys{saved};
-    for(unsigned mode=0;mode<4;++mode) {
+    for(bool snapping:{false,true}) for(unsigned mode=0;mode<4;++mode) {
         BYTE neutral[256]{};if(mode==3) neutral[VK_CONTROL]=0x80;SetKeyboardState(neutral);
-        RegionSelector selector(image);std::exception_ptr failure;
-        const POINT end=mode==1?POINT{click.x+90,click.y+60}:mode==2?POINT{click.x+1,click.y+1}:click;
-        RECT expected=mode==1?normalize_rect(click,end):front;
+        RegionSelector selector(image,false,snapping);std::exception_ptr failure;
+        const bool free_drag=mode==1 || (!snapping && mode==3);
+        const POINT end=free_drag?POINT{click.x+90,click.y+60}:mode==2?POINT{click.x+1,click.y+1}:click;
+        RECT expected=snapping && !free_drag?front:normalize_rect(click,end);
         NativeWork driver;driver.start([&] {
             HWND target=nullptr;
             try {
                 target=wait_selector();
                 probe_selector(target,[&](HWND target) {
                     const auto send=[&](UINT message,POINT point,WPARAM keys=0) {SendMessageW(target,message,keys,MAKELPARAM(point.x,point.y));};
+                    Image baseline;
                     if(mode==0) {
-                        SendMessageW(target,WM_MOUSELEAVE,0,0);const auto baseline=render_window(target);
+                        SendMessageW(target,WM_MOUSELEAVE,0,0);baseline=render_window(target);
                         send(WM_MOUSEMOVE,click);const auto hovered=render_window(target);
-                        require(hovered.bgra!=baseline.bgra,"Hover produced no window highlight");
-                        const auto center=(std::size_t(click.y)*900+click.x)*4;
-                        require(std::memcmp(hovered.bgra.data()+center,image.bgra.data()+center,4)==0,"Hovered window did not reveal frozen image pixels");
-                        save_image(directory/L"window-hover.png",hovered);
+                        require((hovered.bgra!=baseline.bgra)==snapping,"Window hover did not respect the snapping preference");
+                        if(snapping) {
+                            const auto center=(std::size_t(click.y)*900+click.x)*4;
+                            require(std::memcmp(hovered.bgra.data()+center,image.bgra.data()+center,4)==0,"Hovered window did not reveal frozen image pixels");
+                            save_image(directory/L"window-hover.png",hovered);
+                        } else save_image(directory/L"window-snapping-disabled.png",hovered);
                         send(WM_MOUSEMOVE,{20,570});render_window(target);
                         SendMessageW(target,WM_MOUSELEAVE,0,0);
                         require(render_window(target).bgra==baseline.bgra,"Hover transitions left stale window pixels");
                     }
                     send(WM_MOUSEMOVE,click);send(WM_LBUTTONDOWN,click,MK_LBUTTON);
-                    if(mode==1 || mode==2) send(WM_MOUSEMOVE,end,MK_LBUTTON);
+                    if(free_drag || mode==2) send(WM_MOUSEMOVE,end,MK_LBUTTON);
                     send(WM_LBUTTONUP,end);
-                    if(mode!=3) {
+                    if(!snapping && mode==0) {
+                        require(render_window(target).bgra==baseline.bgra,"Disabled snapping selected a window on click");
+                        SendMessageW(target,WM_KEYDOWN,VK_ESCAPE,0);
+                    } else if(mode!=3) {
                         if(mode==0) save_image(directory/L"window-selected.png",render_window(target));
-                        const POINT save{std::clamp(expected.right-134,0l,766l)+67,
-                            (expected.bottom+45<=600?expected.bottom+7:std::max(0l,expected.top-45))+19};
-                        send(WM_LBUTTONDOWN,save);
+                        const RECT bar=selection_toolbars({0,0,900,600},expected).second;
+                        send(WM_LBUTTONDOWN,{bar.left+67,bar.top+19});
                     }
                 });
             } catch(...) {failure=std::current_exception();if(target) PostMessageW(target,WM_CLOSE,0,0);}
         });
         const auto result=selector.run(nullptr,bounds);driver.join();if(failure) std::rethrow_exception(failure);
-        require(result.action==(mode==3?SelectionAction::Copy:SelectionAction::Save),"Snapped selection did not reach the requested output action");
+        const auto action=!valid_rect(expected)?SelectionAction::Cancel:mode==3?SelectionAction::Copy:SelectionAction::Save;
+        require(result.action==action,"Window snapping preference disrupted the requested output action");
         require(EqualRect(&result.rect,&expected),"Click, click jitter, or free drag selected incorrect pixels");
         require(result.marks.empty() && selector.image().bgra==image.bgra,"Window selection modified source pixels or annotations");
-        const auto cropped=crop_image(selector.image(),result.rect);
-        require(cropped.width==unsigned(expected.right-expected.left) && cropped.height==unsigned(expected.bottom-expected.top),
-                "Snapped export dimensions disagree with visible bounds");
+        if(valid_rect(expected)) {
+            const auto cropped=crop_image(selector.image(),result.rect);
+            require(cropped.width==unsigned(expected.right-expected.left) && cropped.height==unsigned(expected.bottom-expected.top),
+                    "Snapped export dimensions disagree with visible bounds");
+        }
     }
-    std::cout<<checks<<" window snapping checks passed: native stacking/filtering, clipped bounds, hover cleanup, click, jitter, free drag, Ctrl-copy.\n";
+    std::cout<<checks<<" window snapping checks passed: native stacking/filtering, clipped bounds, enabled/disabled hover and click, one-pixel/free drag, Ctrl-copy.\n";
     std::cout<<"100/125/150 percent coordinate cases are synthetic; physical display scaling was not changed.\n";
     std::cout<<"Only owned windows were driven; system clipboard and display settings were not changed.\n";
     return 0;

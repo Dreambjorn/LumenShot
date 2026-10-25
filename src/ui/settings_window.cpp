@@ -91,6 +91,8 @@ void App::create_controls() {
     add_combo(KeyChoice,keys,settings.key==VK_SNAPSHOT?0:int(settings.key-VK_F1)+1,right,262,column_width);
     HWND magnifier=control(L"BUTTON",L"Show magnifier",BS_AUTOCHECKBOX|WS_TABSTOP,ShowMagnifier,left,316,column_width,field_height);
     SendMessageW(magnifier,BM_SETCHECK,settings.show_magnifier?BST_CHECKED:BST_UNCHECKED,0);
+    HWND snapping=control(L"BUTTON",L"Snap to windows",BS_AUTOCHECKBOX|WS_TABSTOP,WindowSnapping,right,316,column_width,field_height);
+    SendMessageW(snapping,BM_SETCHECK,settings.window_snapping?BST_CHECKED:BST_UNCHECKED,0);
     creating_page=ImagePage;
     label(L"Content",left,168,column_width);label(L"Peak nits (0=Auto)",right,168,148);label(L"White nits (0=Auto)",538,168,148);
     add_combo(ContentChoice,{L"Automatic",L"HDR content",L"SDR content on HDR display"},int(settings.color.mode),left,194,column_width);
@@ -214,6 +216,8 @@ void App::read_controls(int changed) {
     }
     if(!changed || changed==ShowMagnifier)
         next.show_magnifier=SendDlgItemMessageW(window,ShowMagnifier,BM_GETCHECK,0,0)==BST_CHECKED;
+    if(!changed || changed==WindowSnapping)
+        next.window_snapping=SendDlgItemMessageW(window,WindowSnapping,BM_GETCHECK,0,0)==BST_CHECKED;
     if(!changed || changed==DarkMode)
         next.dark_mode=SendDlgItemMessageW(window,DarkMode,BM_GETCHECK,0,0)==BST_CHECKED;
     if(!changed || changed==KeepOriginal)
@@ -349,7 +353,7 @@ LRESULT CALLBACK window_proc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
             case MonitorChoice: case BackendChoice: case ContentChoice: case HdrFormatChoice: case HdrAnnotationChoice: case KeyChoice: case ImageSize:
                 if(app->controls_ready && HIWORD(wp)==CBN_SELCHANGE) app->apply_setting(LOWORD(wp));
                 break;
-            case KeepOriginal: case DarkMode: case ShowMagnifier: case StartWithWindows: case ModifierCtrl: case ModifierShift: case ModifierAlt:
+            case KeepOriginal: case DarkMode: case ShowMagnifier: case WindowSnapping: case StartWithWindows: case ModifierCtrl: case ModifierShift: case ModifierAlt:
                 if(app->controls_ready && HIWORD(wp)==BN_CLICKED) app->apply_setting(LOWORD(wp));
                 if(LOWORD(wp)==KeepOriginal) app->update_hdr_choice();
                 break;

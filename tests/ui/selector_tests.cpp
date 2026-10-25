@@ -661,7 +661,7 @@ int wmain(int argc,wchar_t** argv) try {
         grid.bgra[i]=(x+y)%100+120;grid.bgra[i+1]=y%180+40;grid.bgra[i+2]=x%200+20;grid.bgra[i+3]=255;
     }
     {
-        RegionSelector selector(grid);selector.preview_selection({100,100,500,350});std::exception_ptr failure;NativeWork driver;
+        RegionSelector selector(grid,true);selector.preview_selection({100,100,500,350});std::exception_ptr failure;NativeWork driver;
         driver.start([&] {try {drive_privacy(directory);} catch(...) {failure=std::current_exception();
             HWND target=FindWindowW(L"LumenShotRegionSelector",nullptr);DWORD pid=0;if(target) GetWindowThreadProcessId(target,&pid);
             if(target && pid==GetCurrentProcessId()) PostMessageW(target,WM_CLOSE,0,0);
@@ -675,19 +675,19 @@ int wmain(int argc,wchar_t** argv) try {
         require(selector.image().bgra==grid.bgra,"Privacy editor changed the frozen capture");
     }
     for(int direction=0;direction<4;++direction) {
-        RegionSelector selector(grid);std::exception_ptr failure;NativeWork driver;
+        RegionSelector selector(grid,true);std::exception_ptr failure;NativeWork driver;
         driver.start([&] {try {drive_magnifier(grid,false,directory,true,direction);} catch(...) {failure=std::current_exception();}});
         const auto result=selector.run(nullptr,{80,80,980,680});driver.join();if(failure) std::rethrow_exception(failure);
         require(result.action==SelectionAction::Cancel && selector.image().bgra==grid.bgra,"Magnifier dragging changed capture pixels or action");
     }
     {
-        RegionSelector selector(grid,false);std::exception_ptr failure;NativeWork driver;
+        RegionSelector selector(grid);std::exception_ptr failure;NativeWork driver;
         driver.start([&] {try {drive_magnifier(grid,false,directory,false);} catch(...) {failure=std::current_exception();}});
         const auto result=selector.run(nullptr,{80,80,980,680});driver.join();if(failure) std::rethrow_exception(failure);
         require(result.action==SelectionAction::Cancel && selector.image().bgra==grid.bgra,"Disabled magnifier changed capture pixels or action");
     }
     for(bool selected:{false,true}) {
-        RegionSelector selector(grid);if(selected) selector.preview_selection({100,100,500,350});
+        RegionSelector selector(grid,true);if(selected) selector.preview_selection({100,100,500,350});
         std::exception_ptr failure;NativeWork driver;driver.start([&] {
             try {drive_magnifier(grid,selected,directory);} catch(...) {failure=std::current_exception();}
         });
