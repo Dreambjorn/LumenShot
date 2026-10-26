@@ -1,6 +1,7 @@
 #pragma once
 #include "image/image_io.hpp"
 #include <ultrahdr_api.h>
+#include <ultrahdr/jpegr.h>
 
 // This product includes Gain Map technology under license by Adobe.
 
@@ -27,6 +28,11 @@ inline Rgb to_bt2020(Rgb color) {
 inline void check_hdr_codec(uhdr_error_info_t result,const char* context) {
     if(result.error_code!=UHDR_CODEC_OK)
         throw std::runtime_error(std::string(context)+(result.has_detail?": "+std::string(result.detail):"."));
+}
+inline bool hdr_jpeg_capacity_error(const uhdr_error_info_t& error) {
+    constexpr char detail[]="output buffer to store compressed data is too small:";
+    return error.error_code==UHDR_CODEC_MEM_ERROR && error.has_detail
+        && std::strncmp(error.detail,detail,sizeof(detail)-1)==0;
 }
 inline void validate_hdr_jpeg(const std::filesystem::path& path,unsigned width,unsigned height,double peak=0) {
     DiagnosticTimer timing(DiagnosticStage::Validate);
@@ -111,7 +117,7 @@ inline void save_hdr_jpeg(const std::filesystem::path& path,const Frame& source,
     }
     uhdr_codec_private_t* encoder=uhdr_create_encoder();
     if(!encoder) throw std::runtime_error("Cannot create HDR JPEG encoder.");
-    struct Release {uhdr_codec_private_t* value;~Release(){uhdr_release_encoder(value);}} release{encoder};
+    struct Release {uhdr_codec_private_t* value;~Release(){if(value) uhdr_release_encoder(value);}} release{encoder};
     uhdr_raw_image_t hdr_image{},sdr_image{};
     hdr_image.fmt=UHDR_IMG_FMT_64bppRGBAHalfFloat;hdr_image.cg=UHDR_CG_BT_2100;
     hdr_image.ct=UHDR_CT_LINEAR;hdr_image.range=UHDR_CR_FULL_RANGE;
@@ -127,8 +133,23 @@ inline void save_hdr_jpeg(const std::filesystem::path& path,const Frame& source,
     check_hdr_codec(uhdr_enc_set_using_multi_channel_gainmap(encoder,1),"Cannot retain HDR color detail");
     check_hdr_codec(uhdr_enc_set_preset(encoder,UHDR_USAGE_BEST_QUALITY),"Cannot set HDR encoding quality");
     check_hdr_codec(uhdr_enc_set_target_display_peak_brightness(encoder,float(peak)),"Cannot set HDR peak metadata");
-    check_hdr_codec(uhdr_encode(encoder),"Cannot encode Ultra HDR JPEG");
+    const auto status=uhdr_encode(encoder);
     const auto* encoded=uhdr_get_encoded_stream(encoder);
+    std::vector<std::uint8_t> larger;
+    uhdr_compressed_image_t recovered{};
+    if(hdr_jpeg_capacity_error(status)) {
+        uhdr_release_encoder(release.value);release.value=nullptr;
+        // Two padded JPEG bounds plus eight maximum-sized metadata segments.
+        const auto padded=std::size_t((source.width+7)&~7u)*((source.height+7)&~7u);
+        larger.resize(padded*12+8*65536);
+        recovered.data=larger.data();recovered.capacity=larger.size();
+        recovered.cg=UHDR_CG_UNSPECIFIED;recovered.ct=UHDR_CT_UNSPECIFIED;recovered.range=UHDR_CR_UNSPECIFIED;
+        ultrahdr::JpegR codec(nullptr,1,requested_quality,true,1,UHDR_USAGE_BEST_QUALITY,
+            std::numeric_limits<float>::min(),std::numeric_limits<float>::max(),float(peak));
+        check_hdr_codec(codec.encodeJPEGR(&hdr_image,&sdr_image,&recovered,requested_quality,nullptr),
+                        "Cannot encode Ultra HDR JPEG");
+        encoded=&recovered;
+    } else check_hdr_codec(status,"Cannot encode Ultra HDR JPEG");
     if(!encoded || !encoded->data || !encoded->data_sz) throw std::runtime_error("HDR JPEG encoder returned no image.");
     OutputTransaction transaction(path);
     std::ofstream output(transaction.path(),std::ios::binary|std::ios::trunc);

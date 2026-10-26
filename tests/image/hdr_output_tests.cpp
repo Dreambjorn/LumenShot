@@ -32,6 +32,104 @@ void verify_low_peak(const std::filesystem::path& directory,float value,unsigned
     }
     std::cout<<"LOW_PEAK "<<index<<" expected nits "<<value*80<<" decoded "<<half_to_float(pixels[0])*203<<"\n";
 }
+bool full_quality_tables(const uhdr_mem_block_t* image) {
+    if(!image || !image->data || image->data_sz<4) return false;
+    const auto* bytes=static_cast<const std::uint8_t*>(image->data);
+    if(bytes[0]!=0xff || bytes[1]!=0xd8) return false;
+    std::size_t position=2;unsigned tables=0;
+    while(position+1<image->data_sz) {
+        if(bytes[position++]!=0xff) return false;
+        while(position<image->data_sz && bytes[position]==0xff) ++position;
+        if(position==image->data_sz) return false;
+        const auto marker=bytes[position++];
+        if(marker==0xda) return tables>0;
+        if(marker==0xd9) return false;
+        if(marker==0xd8 || marker==1 || (marker>=0xd0 && marker<=0xd7)) continue;
+        if(position+2>image->data_sz) return false;
+        const std::size_t length=unsigned(bytes[position])*256+bytes[position+1];
+        if(length<2 || length>image->data_sz-position) return false;
+        const auto end=position+length;position+=2;
+        if(marker==0xdb) while(position<end) {
+            const unsigned precision=bytes[position++]>>4;
+            if(precision>1 || end-position<64*(precision+1)) return false;
+            for(unsigned i=0;i<64;++i) {
+                unsigned value=bytes[position++];
+                if(precision) value=value*256+bytes[position++];
+                if(value!=1) return false;
+            }
+            ++tables;
+        }
+        position=end;
+    }
+    return false;
+}
+void verify_incompressible(const std::filesystem::path& directory) {
+    const unsigned sizes[][2]={{513,257},{9,1025},{1025,9},{8,8}};
+    for(const auto& size:sizes) {
+        Frame source;source.width=size[0];source.height=size[1];source.hdr=true;source.sdr_white=203;
+        source.pixels.resize(checked_pixels(source.width,source.height));
+        std::uint32_t state=0x51f15e;
+        for(auto& pixel:source.pixels) {
+            float channels[3];
+            for(float& channel:channels) {
+                state=1664525u*state+1013904223u;
+                channel=half_to_float(float_to_half(float(.02+12.48*double(state>>8)/16777215)));
+            }
+            pixel={channels[0],channels[1],channels[2],1};
+        }
+        const auto frozen=source.pixels;
+        ColorSettings settings;settings.mode=ContentMode::Auto;settings.exposure=.1;
+        const auto base=render_sdr(source,settings);
+        const auto name=L"stress-"+std::to_wstring(source.width)+L"-"+std::to_wstring(source.height);
+        std::string full_bytes;
+        for(unsigned quality=0;quality<4;++quality) {
+            const auto path=directory/(name+L"-"+std::to_wstring(quality)+L".jpg");
+            save_hdr_jpeg(path,source,base,HdrJpegQuality(quality));
+            std::ifstream input(path,std::ios::binary);
+            std::string bytes((std::istreambuf_iterator<char>(input)),{});
+            require(!bytes.empty(),"Incompressible image produced no HDR JPEG");
+            require(!std::memcmp(source.pixels.data(),frozen.data(),frozen.size()*sizeof(Pixel)),
+                    "Incompressible HDR export modified source pixels");
+            if(quality==0) {
+                full_bytes=bytes;
+                if(source.width==513)
+                    require(bytes.size()>source.pixels.size()*6,"Full stress export avoided the original capacity regression");
+            }
+            auto* decoder=uhdr_create_decoder();require(decoder!=nullptr,"Cannot inspect incompressible HDR JPEG");
+            struct Release {uhdr_codec_private_t* value;~Release(){uhdr_release_decoder(value);}} release{decoder};
+            uhdr_compressed_image_t compressed{};compressed.data=bytes.data();compressed.data_sz=compressed.capacity=bytes.size();
+            check_hdr_codec(uhdr_dec_set_image(decoder,&compressed),"Cannot reopen incompressible HDR JPEG");
+            check_hdr_codec(uhdr_dec_set_out_img_format(decoder,UHDR_IMG_FMT_64bppRGBAHalfFloat),"Cannot select stress HDR pixels");
+            check_hdr_codec(uhdr_dec_set_out_color_transfer(decoder,UHDR_CT_LINEAR),"Cannot select stress linear pixels");
+            check_hdr_codec(uhdr_dec_set_out_max_display_boost(decoder,10000.0f/203),"Cannot select stress display headroom");
+            check_hdr_codec(uhdr_dec_probe(decoder),"Cannot inspect incompressible HDR JPEG");
+            require(uhdr_dec_get_image_width(decoder)==int(source.width) && uhdr_dec_get_image_height(decoder)==int(source.height)
+                    && uhdr_dec_get_gainmap_width(decoder)==int(source.width) && uhdr_dec_get_gainmap_height(decoder)==int(source.height),
+                    "Incompressible HDR export changed base or gain-map dimensions");
+            if(quality==0)
+                require(full_quality_tables(uhdr_dec_get_base_image(decoder)) && full_quality_tables(uhdr_dec_get_gainmap_image(decoder)),
+                        "Full stress export reduced base or gain-map JPEG quality");
+            check_hdr_codec(uhdr_decode(decoder),"Cannot decode incompressible HDR JPEG");
+            const auto* decoded=uhdr_get_decoded_image(decoder);
+            require(decoded && decoded->w==source.width && decoded->h==source.height && decoded->planes[0]
+                    && decoded->stride[0]>=source.width && decoded->cg==UHDR_CG_BT_2100,
+                    "Incompressible HDR output lost decoded pixels or gamut");
+            const auto* gainmap=uhdr_get_decoded_gainmap_image(decoder);
+            require(gainmap && gainmap->w==source.width && gainmap->h==source.height && gainmap->fmt==UHDR_IMG_FMT_32bppRGBA8888,
+                    "Incompressible HDR export reduced gain-map channels or resolution");
+            bool finite=true;const auto* pixels=static_cast<const std::uint16_t*>(decoded->planes[0]);
+            for(unsigned y=0;y<source.height;++y) for(unsigned x=0;x<source.width;++x)
+                for(unsigned channel=0;channel<3;++channel)
+                    finite=finite && std::isfinite(half_to_float(pixels[(std::size_t(y)*decoded->stride[0]+x)*4+channel]));
+            require(finite,"Incompressible HDR reconstruction contains nonfinite pixels");
+        }
+        const auto full_path=directory/(name+L"-0.jpg");
+        bool rejected=false;try {save_hdr_jpeg(full_path,source,base);}catch(const std::exception&){rejected=true;}
+        std::ifstream input(full_path,std::ios::binary);
+        require(rejected && std::string((std::istreambuf_iterator<char>(input)),{})==full_bytes,
+                "Incompressible HDR export overwrote an existing file");
+    }
+}
 int wmain(int argc,wchar_t** argv) try {
     if(argc!=2) throw std::runtime_error("Specify an owned HDR output evidence directory.");
     Runtime runtime;
@@ -163,11 +261,12 @@ int wmain(int argc,wchar_t** argv) try {
     unsigned low_peak_index=0;
     for(unsigned quality=0;quality<4;++quality) for(float value:{0.0f,.01f,1.0f,2.5375f,2.55f})
         verify_low_peak(directory,value,low_peak_index++,HdrJpegQuality(quality));
+    verify_incompressible(directory);
     source.pixels[0].r=std::numeric_limits<float>::quiet_NaN();
     rejected=false;try {save_hdr_jpeg(directory/L"invalid.jpg",source,expected_sdr);}catch(const std::exception&){rejected=true;}
     require(rejected && !std::filesystem::exists(directory/L"invalid.jpg"),"Invalid source produced an HDR file");
     for(const auto& entry:std::filesystem::directory_iterator(directory))
         require(entry.path().filename().wstring().find(L".writing-")==std::wstring::npos,"Incomplete HDR file left behind");
-    std::cout<<checks<<" HDR output checks passed: four quality presets, dual gain metadata, low HDR peaks, 80-to-203-nit scale, wide gamut, SDR fallback, odd crop, and file safety.\n";
+    std::cout<<checks<<" HDR output checks passed: four quality presets, full-quality stress noise, thin and tiny crops, dual gain metadata, low HDR peaks, 80-to-203-nit scale, wide gamut, SDR fallback, odd crop, and file safety.\n";
     return 0;
 } catch(const std::exception& error) {std::cerr<<"HDR output failed after "<<checks<<" checks: "<<error.what()<<"\n";return 1;}

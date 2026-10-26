@@ -16,7 +16,8 @@ function(hdrshot_target target)
     add_dependencies(${target} libultrahdr libavif manifest_shadow)
     target_compile_features(${target} PRIVATE cxx_std_17)
     target_compile_definitions(${target} PRIVATE LUMENSHOT_VERSION="${PROJECT_VERSION}")
-    target_include_directories(${target} PRIVATE "${uhdr_include}" "${avif_include}" "${CMAKE_SOURCE_DIR}/src")
+    target_include_directories(${target} PRIVATE "${uhdr_include}" "${uhdr_include}/lib/include"
+        "${jpeg_include}" "${avif_include}" "${CMAKE_SOURCE_DIR}/src")
     target_compile_options(${target} PRIVATE -O2 -Wall -Wextra -Werror -flarge-source-files -fstack-protector-strong)
     target_link_options(${target} PRIVATE -static -static-libgcc -static-libstdc++ "-B${manifest_shadow}/"
         -Wl,--dynamicbase,--nxcompat,--high-entropy-va)
