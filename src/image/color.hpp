@@ -190,6 +190,8 @@ public:
     }
 };
 
+template<class Body> void parallel_rows(unsigned height,const Body& body);
+
 class RenderLookup {
     static constexpr unsigned tone_size=65536, transfer_size=16384;
     const ToneCurve& curve_;
@@ -207,10 +209,12 @@ public:
         transfer_=&transfer;
         if (!hdr) return;
         tone_.resize(tone_size+1);
-        for (unsigned i=0;i<=tone_size;++i) {
-            const double position=double(i)/tone_size;
-            tone_[i]=curve_.map(peak_*position*position);
-        }
+        parallel_rows(tone_size+1,[&](unsigned,unsigned first,unsigned last) {
+            for (unsigned i=first;i<last;++i) {
+                const double position=double(i)/tone_size;
+                tone_[i]=curve_.map(peak_*position*position);
+            }
+        });
     }
     double map(double value) const {
         if (tone_.empty()) return curve_.map(value);
